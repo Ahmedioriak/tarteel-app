@@ -21,7 +21,8 @@ pre{white-space:pre-wrap;direction:ltr;text-align:left;font-size:12px;background
 const log = (...a) => { document.getElementById("log").textContent += a.join(" ") + "\n"; };
 const RESULTS = { done: false, cases: [] };
 window.RESULTS = RESULTS;
-const RECITERS = { husary: "ar.husary", alafasy: "ar.alafasy", minshawi: "ar.minshawi" };
+const RECITERS = { husary: "Husary_64kbps", alafasy: "Alafasy_128kbps", minshawi: "Minshawy_Murattal_128kbps", basit: "Abdul_Basit_Murattal_64kbps", shaatree: "Abu_Bakr_Ash-Shaatree_128kbps" };
+const pad3 = n => String(n).padStart(3, "0");
 async function audio16k(url) {
   const r = await fetch(url); if (!r.ok) throw new Error("audio " + r.status);
   const buf = await r.arrayBuffer();
@@ -59,7 +60,7 @@ async function main() {
   for (const rec of reciters) {
     for (const [s, a] of list) {
       const g = idx(s, a); if (g < 0) continue;
-      const url = "https://cdn.islamic.network/quran/audio/128/" + RECITERS[rec] + "/" + (g + 1) + ".mp3";
+      const url = "https://everyayah.com/data/" + RECITERS[rec] + "/" + pad3(s) + pad3(a) + ".mp3";
       const c = { rec, ayah: s + ":" + a };
       try {
         const x = await audio16k(url);
