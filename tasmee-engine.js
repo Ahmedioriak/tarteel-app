@@ -468,6 +468,7 @@
       if (opts.skip && opts.skip(i1)) continue;
       const e = stripLen(exp), g = stripLen(got);
       if (e === g) continue;
+      if (opts.harakat === false && stripVowels(e) === stripVowels(g)) continue; // only the vowels differ: not judged
       if (unsure(j1, j2, jaliThr)) continue;
       if (tag === "replace" && e.length === 1 && g.length === 1 && HARAKAT.has(e) && HARAKAT.has(g)) {
         const letter = consonantBefore(R, i1);
@@ -485,6 +486,12 @@
       }
     }
 
+    // what the reciter chose not to be judged on: harakat (vowels, shadda, a madd dropped) and the fine points of tajweed
+    if (opts.harakat === false || opts.tajweed === false) {
+      for (let k = 0; k < nW; k++) notes[k] = notes[k].filter(n =>
+        (opts.tajweed !== false || n.severity !== "khafi") &&
+        (opts.harakat !== false || !(n.rule === "vowel" || n.rule === "shadda" || (n.severity === "jali" && MADD_NAME[n.rule]))));
+    }
     // a word whose sounds are (almost) all missing was skipped
     for (let k = 0; k < nW; k++) {
       const [a, z] = ref.spans[k];
@@ -492,6 +499,8 @@
     }
     return { notes, b };
   }
+  const VOWELS = new Set(["َ", "ُ", "ِ", "۪", "ؙ", "ـ"]);
+  function stripVowels(x) { let o = ""; for (const c of x) if (!VOWELS.has(c)) o += c; return o; }
   function consonantBefore(R, i) { for (let k = i - 1; k >= 0; k--) { const c = R[k]; if (!HARAKAT.has(c) && !LONG.has(c) && c !== "ڇ") return c; } return ""; }
 
   /* ------------------------------------------------------------------ */
@@ -509,7 +518,7 @@
     INDEX = grams; return grams;
   }
   /** heard phonemes → best {ayah, score} or {ambiguous:true} or null */
-  function findAyah(heard) {
+  function findAyah(heard, keep) {
     buildIndex();
     const sk = skeleton(heard); if (sk.length < 6) return { short: true };
     const votes = new Map();
@@ -517,6 +526,7 @@
     // a breath may run into the next ayah: give ayah g the votes of g+1 too (and try g-1 for every voted g: a very
     // short ayah such as «يسٓ» has no 4-grams of its own)
     const pool = new Set(); for (const g of votes.keys()) { pool.add(g); if (g > 0) pool.add(g - 1); }
+    if (keep) { for (const g of [...pool]) if (!keep(g)) pool.delete(g); if (keep.all) for (const g of keep.all) pool.add(g); }
     const cand = [...pool].map(g => [g, (votes.get(g) || 0) + 0.5 * (votes.get(g + 1) || 0)]).sort((a, b) => b[1] - a[1]).slice(0, 30);
     const scored = [];
     for (const [g] of cand) {
@@ -529,6 +539,17 @@
     const best = scored[0], second = scored.find(x => x.ayah !== best.ayah && Math.abs(x.ayah - best.ayah) > 1);
     if (second && second.score - best.score < 0.06) return { ambiguous: true, best, second };
     return best;
+  }
+  /** The isti'adha and / or basmala said at the start of a breath: → {which: [...], end} (heard[0:end] is them) or null */
+  function extraPrefix(heard) {
+    let at = 0; const which = [];
+    for (const k of ["istiatha", "basmala"]) {
+      const r = PH.extras[k], rest = heard.slice(at);
+      if (rest.length < r.length * 0.6) continue;
+      const loc = locate(rest, 0, rest.length, r); // where in the heard script the extra text sits
+      if (loc.s <= 4 && loc.cost / r.length < 0.3) { which.push(k); at += loc.e; }
+    }
+    return which.length ? { which, end: at } : null;
   }
   function isExtra(heard) { // isti'adha or basmala
     for (const k of ["istiatha", "basmala"]) { const r = PH.extras[k]; const loc = locate(r, 0, r.length, heard); if (loc.cost / Math.max(1, heard.length) < 0.3 && (loc.e - loc.s) > r.length * 0.6) return k; }
@@ -623,7 +644,7 @@
     const state = []; // per passage word: 0 pending, 1 ok, 2 error (jali), 3 khafi only, 4 fixed after an error, 5 skipped
     const wordNotes = [];
     const tempo = [];
-    let pendingHeard = "", busy = false; const queue = [];
+    let pendingHeard = "", busy = false, afterBasmala = false; const queue = [];
     const emit = (type, data) => opts.onEvent && opts.onEvent(Object.assign({ type }, data || {}));
 
     function setPassage(ayat, startPh) {
@@ -636,25 +657,48 @@
 
     function wordAt(i) { for (let k = 0; k < P.spans.length; k++) if (P.spans[k][0] <= i && i < P.spans[k][1]) return k; return P.spans.length - 1; }
 
+    const surahStart = (g) => g === 0 || opts.surahOf(g - 1) !== opts.surahOf(g);
+    // after a basmala the reciter is starting a surah: its first ayah (al-Fatiha: its second, the basmala being its first)
+    const opening = Object.assign((g) => surahStart(g) && g !== 0, { all: [1] });
+    function expectsHere(r) { // the passage itself goes on with this text (al-Fatiha 1:1, an-Naml 27:30)
+      if (!P || ptr >= P.ph.length) return false;
+      const loc = locate(P.ph, ptr, Math.min(P.ph.length, ptr + r.length + 12), r, ptr);
+      return loc.cost / r.length < 0.3;
+    }
+
     async function processBreath(samples, interim) {
       const t0 = performance.now();
-      const { heard, probs, times } = await (opts.hear || hear)(samples);
+      let { heard, probs, times } = await (opts.hear || hear)(samples);
       const ms = performance.now() - t0;
       if (!heard) return;
-      if (!interim && isExtra(heard)) { emit("extra", { which: isExtra(heard) }); return; }
+      if (!interim) {
+        const ex = extraPrefix(heard);
+        if (ex && !(ex.which.includes("basmala") && expectsHere(PH.extras.basmala))) {
+          if (ex.which.includes("basmala")) afterBasmala = true;
+          heard = heard.slice(ex.end); if (probs) probs = probs.slice(ex.end); if (times) times = times.slice(ex.end);
+          if (skeleton(heard).length < 4) { emit("extra", { which: ex.which[ex.which.length - 1], start: afterBasmala && !P }); return; }
+        }
+      }
       if (!P) { // free start: find the ayah
         if (interim) return;
         const h = pendingHeard + heard;
-        const f = findAyah(h);
+        let f = afterBasmala ? findAyah(h, opening) : findAyah(h);
+        if (afterBasmala && (!f || (!f.short && !f.ambiguous && f.score > 0.3))) { const any = findAyah(h); if (any && !any.short && !any.ambiguous && (!f || f.short || f.ambiguous || any.score < f.score - 0.1)) f = any; }
         if (!f) { pendingHeard = ""; emit("notfound", { heard }); return; }
         if (f.short) { pendingHeard = h; emit("short", {}); return; }
         if (f.ambiguous) { pendingHeard = h.slice(-400); emit("ambiguous", {}); return; }
         pendingHeard = "";
-        const g = f.ayah, list = []; // from this ayah to the end of its surah
-        const sIdx = opts.surahOf(g); for (let k = g; k < PH.ayat.length && opts.surahOf(k) === sIdx; k++) list.push(k);
-        setPassage(list, f.s);
-        for (let k = 0; k < P.words.length && P.spans[k][1] <= f.s + 2; k++) { state[k] = 6; emit("word", { word: k, state: 6, notes: [] }); }
-        emit("found", { ayah: g });
+        let g = f.ayah, start = f.s;
+        const basmalaFatiha = afterBasmala && g === 1; // «بسم الله...» then «الحمد لله»: al-Fatiha from its first ayah
+        afterBasmala = false;
+        const first = basmalaFatiha ? 0 : g, list = []; // from this ayah to the end of its surah
+        const sIdx = opts.surahOf(first); for (let k = first; k < PH.ayat.length && opts.surahOf(k) === sIdx; k++) list.push(k);
+        if (basmalaFatiha) start += PH.ayat[0][0].length;
+        setPassage(list, start);
+        for (let k = 0; k < P.words.length && P.spans[k][1] <= start + 2; k++) {
+          const st = basmalaFatiha && P.words[k].ayah === 0 ? 1 : 6; state[k] = st; emit("word", { word: k, state: st, notes: [] });
+        }
+        emit("found", { ayah: first, surahStart: surahStart(g) || basmalaFatiha });
         return judge(heard, probs, times, false, ms, true);
       }
       return judge(heard, probs, times, interim, ms, false);
@@ -703,7 +747,7 @@
       ref.occ.forEach((k, o) => { const [a, b] = ref.spans[o]; if (P.first[k]) mark(a, a + 3); if (P.last[k]) mark(b - 3, b); });
       for (const x of ref.segStart) mark(x, x + 3);
       for (const x of ref.segEnd) mark(x - 3, x);
-      const { notes } = listen(ref, heard, probs, times, { tempo, endGrace: 3, skip: (i) => grace.has(i) });
+      const { notes } = listen(ref, heard, probs, times, { tempo, endGrace: 3, skip: (i) => grace.has(i), harakat: opts.harakat !== false, tajweed: opts.tajweed !== false });
 
       // apply, in recitation order (a repeated word: its later reading counts); with "stay", stop at the first clear
       // mistake that was not put right later in the same breath
@@ -748,5 +792,5 @@
     };
   }
 
-  global.TasmeeEngine = { loadModel, loadPhonetics, hear, logMel, opcodes, levDistance, locate, listen, buildPassage, compose, recited, findAyah, skeleton, Session, Recorder, PHONEMES, get PH() { return PH; } };
+  global.TasmeeEngine = { loadModel, loadPhonetics, hear, logMel, opcodes, levDistance, locate, listen, buildPassage, compose, recited, findAyah, extraPrefix, skeleton, Session, Recorder, PHONEMES, get PH() { return PH; } };
 })(typeof window !== "undefined" ? window : globalThis);

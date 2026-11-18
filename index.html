@@ -198,7 +198,7 @@ table.cmp tr.on td{color:var(--green);font-weight:700}
 
 <script>
 "use strict";
-const APP_VERSION="1.3.0"; // keep in sync with CHANGELOG.md and the GitHub commit
+const APP_VERSION="1.4.0"; // keep in sync with CHANGELOG.md and the GitHub commit
 /* ---------- helpers ---------- */
 const $ = s => document.querySelector(s);
 const AR = n => String(n).replace(/\d/g, d => "٠١٢٣٤٥٦٧٨٩"[d]);
@@ -261,7 +261,7 @@ let IN_FRAME=true; try{ IN_FRAME = window.self!==window.top; }catch(e){ IN_FRAME
 let STANDALONE=false; // true when the page runs on its own site (e.g. GitHub Pages), not inside Claude
 function defaults(){ return {v:1, amount:.5, days:[0,1,2,3,4,6], order:"back", start:114, rep:10, qfs:27,
   mem:"", hist:[], log:{}, weak:{}, farPos:0, started:keyOf(new Date()), range:{s:1,a:1,b:7},
-  reciter:"husary", arep:1, rrep:1, speed:1, theme:"green", stay:true, engine:"acc"}; }
+  reciter:"husary", arep:1, rrep:1, speed:1, theme:"green", stay:true, engine:"acc", harakat:false, tajweed:false}; }
 function packBits(u){ let s=""; for(let i=0;i<u.length;i+=8){ let b=0; for(let k=0;k<8;k++) if(u[i+k]) b|=1<<k; s+=String.fromCharCode(b);} return btoa(s); }
 function unpackBits(str){ const u=new Uint8Array(N); if(!str) return u; try{ const s=atob(str); for(let i=0;i<N;i++) u[i]=(s.charCodeAt(i>>3)>>(i&7))&1; }catch(e){} return u; }
 
@@ -526,8 +526,8 @@ function renderRead(){
   else if(MODE==="voice") h+=`<p class="muted" style="font-size:13px;margin:8px 0 0">الصوت يتوقف وقت التسميع عشان المايك يسمعك أنت بس.</p>`;
   if(MODE==="read") h+=`<p class="muted" style="font-size:13px;margin:4px 0 8px">اضغط على الآية كل مرة تقرأها بدون ما تشوف، لين توصل ${S.rep} مرات.</p>`;
   else if(MODE==="test") h+=`<p class="muted" style="font-size:13px;margin:4px 0 8px">الكلمات مخفية. حاول تقرأ الآية من حفظك، واضغط عليها تكشف كلمة كلمة.</p>`;
-  else if(c.kind==="free") h+=`<div class="card" style="margin-top:10px"><h2>تسميع حر</h2><p class="sub" style="margin-top:4px">اضغط «ابدأ التسميع» واقرأ من أي آية تبيها. من أول كلمات أعرف وين أنت، وأطلع لك الآيات وأكمل معك لين آخر السورة.</p>${useAcc()?"":`<p class="sub" style="margin-top:6px">ابدأ بجملة كاملة (٥ كلمات أو أكثر) عشان أعرفها بسرعة.</p>`}</div>`;
-  else h+=`<p class="muted" style="font-size:13px;margin:4px 0 8px">${useAcc()?"اضغط «ابدأ التسميع» واقرأ من حفظك. أسمع الحروف والحركات والمدود، وأي غلط يطلع لك بالأحمر مع شرحه. اضغط على أي كلمة تشوف ملاحظاتها.":"اضغط \"ابدأ التسميع\" واقرأ من حفظك. الكلمات تطلع كل ما قلتها صح، واللي تنساها تطلع بالأحمر."}</p>`;
+  else if(c.kind==="free") h+=`<div class="card" style="margin-top:10px"><h2>تسميع حر</h2><p class="sub" style="margin-top:4px">اضغط «ابدأ التسميع» واقرأ من أي آية تبيها. من أول كلمات أعرف وين أنت، وأطلع لك الآيات وأكمل معك لين آخر السورة. وإذا بديت بالبسملة، أعرف إنك تبدأ أول سورة.</p>${useAcc()?"":`<p class="sub" style="margin-top:6px">ابدأ بجملة كاملة (٥ كلمات أو أكثر) عشان أعرفها بسرعة.</p>`}</div>`;
+  else h+=`<p class="muted" style="font-size:13px;margin:4px 0 8px">${useAcc()?"اضغط «ابدأ التسميع» واقرأ من حفظك. أسمع كل كلمة وحرف"+(S.harakat?" وحركة":"")+"، وأي غلط يطلع لك بالأحمر مع شرحه. اضغط على أي كلمة تشوف ملاحظاتها.":"اضغط \"ابدأ التسميع\" واقرأ من حفظك. الكلمات تطلع كل ما قلتها صح، واللي تنساها تطلع بالأحمر."}</p>`;
 
   let lastPage=null, lastS=null;
   h+=`<div id="ayahs" class="${MODE==="voice"&&VOICE.showText?"showtext":""}">`;
@@ -603,13 +603,15 @@ function lev(a,b){ if(a===b) return 0; const m=a.length,n=b.length; if(!m) retur
 function sim(a,b){ if(!a||!b) return 0; if(a===b) return 1; if(Math.min(a.length,b.length)<=2) return 0; return 1-lev(a,b)/Math.max(a.length,b.length); }
 function voicePrepare(idx){
   const key=idx[0]+":"+idx[idx.length-1]+":"+idx.length; if(VOICE.key===key) return;
-  VOICE.key=key; VOICE.T=[]; VOICE.start={}; VOICE.finals=""; VOICE.partial=""; VOICE.hints=new Set(); VOICE.ended=false; VOICE.base=0;
+  VOICE.key=key; VOICE.T=[]; VOICE.start={}; VOICE.finals=""; VOICE.partial=""; VOICE.hints=new Set(); VOICE.ended=false; VOICE.base=0; VOICE.skipSpoken=0;
   for(const i of idx){ VOICE.start[i]=VOICE.T.length; for(const w of A[i][4].split(/\s+/)) VOICE.T.push({i, n:norm(w)}); }
   VOICE.st=new Array(VOICE.T.length).fill(0); VOICE.p=0;
 }
 function align(text){
   const T=VOICE.T, st=new Array(T.length).fill(0), H=VOICE.hints;
-  const sp=text.split(/\s+/).map(norm).filter(Boolean); let p=0;
+  let sp=text.split(/\s+/).map(norm).filter(Boolean); let p=0;
+  if(VOICE.skipSpoken) sp=sp.slice(VOICE.skipSpoken);
+  else { const ex=stripExtras(sp); const drop=ex.nIst+(ex.nBas&&!expectsBasmala()?ex.nBas:0); if(drop) sp=sp.slice(drop); } // the isti'adha / basmala before the passage
   const skipHints=()=>{ while(p<T.length && H.has(p)){ st[p]=3; p++; } };
   const stay=S && S.stay!==false;
   p=VOICE.base||0; for(let k=0;k<p;k++) st[k]=6;
@@ -695,20 +697,47 @@ function setupDict(d){
 
 /* ----- word-level free start (Claude dictation / browser speech) ----- */
 let WIDX=null;
+let EXTRA_W=null;
+function extraWords(){ if(!EXTRA_W) EXTRA_W={basmala:A[0][4].split(/\s+/).map(norm).filter(Boolean), istiatha:"أعوذ بالله من الشيطان الرجيم".split(/\s+/).map(norm).filter(Boolean)}; return EXTRA_W; }
+/** spoken words (normalized) that open with the isti'adha and / or the basmala → how many words they take */
+function stripExtras(sp){
+  const E=extraWords(); let n=0, nIst=0, nBas=0;
+  for(const k of ["istiatha","basmala"]){
+    const w=E[k]; let m=0; for(let i=0;i<w.length&&n+i<sp.length;i++) if(sp[n+i]===w[i]||sim(sp[n+i],w[i])>=0.7) m++;
+    if(m>=Math.max(3,w.length-1)){ const take=Math.min(w.length, sp.length-n); n+=take; if(k==="basmala") nBas=take; else nIst=take; }
+  }
+  return {n, nIst, nBas};
+}
+function expectsBasmala(){ const E=extraWords().basmala, T=VOICE.T, b=VOICE.base||0; let m=0; for(let i=0;i<E.length&&b+i<T.length;i++) if(T[b+i].n===E[i]) m++; return m>=E.length-1; }
 function freeFindWords(){
-  const sp=VOICE.finals.split(/\s+/).map(norm).filter(x=>x.length>1);
-  if(sp.length<4){ const pe=$("#partial"); if(pe) pe.textContent="كمّل… ("+VOICE.finals.trim()+")"; return; }
+  const all=VOICE.finals.split(/\s+/).map(norm).filter(Boolean);
+  const ex=stripExtras(all), rest=all.slice(ex.n), pe=$("#partial");
+  const longWords=rest.filter(x=>x.length>1).length;
+  if(ex.n && longWords<2){ if(pe) pe.textContent=ex.nBas?"البسملة ✓ اقرأ أول السورة…":"الاستعاذة ✓ كمّل…"; return; }
+  if(longWords<(ex.nBas?2:4)){ if(pe) pe.textContent="كمّل… ("+VOICE.finals.trim()+")"; return; }
+  const sp=rest;
   if(!WIDX){ WIDX=new Map(); const words=[]; for(let i=0;i<N;i++){ const ws=A[i][4].split(/\s+/).map(norm); ws.forEach((w,k)=>words.push([i,k,w])); }
     WIDX.words=words; for(let x=0;x+1<words.length;x++){ const key=words[x][2]+" "+words[x+1][2]; let l=WIDX.get(key); if(!l) WIDX.set(key,l=[]); if(l.length<300) l.push(x); } }
-  const W=WIDX.words, votes=new Map();
-  for(let j=0;j+1<sp.length;j++){ const l=WIDX.get(sp[j]+" "+sp[j+1]); if(!l) continue; for(const x of l){ const start=x-j; votes.set(start,(votes.get(start)||0)+1); } }
-  let best=null, bv=0, second=0; for(const [x,v] of votes){ if(v>bv){ second=bv; bv=v; best=x; } else if(v>second) second=v; }
-  if(best==null || bv<2 || bv===second){ const pe=$("#partial"); if(pe) pe.textContent=bv===second&&bv>=2?"هالمقطع يتكرر، كمّل شوي…":"ما عرفتها بعد، كمّل…"; return; }
-  best=Math.max(0,best); const [g,k]=W[best];
-  const list=[]; for(let i=g;i<N&&A[i][0]===A[g][0];i++) list.push(i);
-  toast("عرفتها: سورة "+surahName(A[g][0])+"، آية "+AR(A[g][1]));
-  READ={kind:"range", s:A[g][0], a:A[g][1], b:A[list[list.length-1]][1], free:true};
-  const fin=VOICE.finals; VOICE.key=""; voicePrepare(list); VOICE.finals=fin; VOICE.base=VOICE.start[g]+k; render();
+  const W=WIDX.words;
+  // after a basmala the reciter is starting a surah: only the first word of an ayah 1 (al-Fatiha: of 1:2) can be the start
+  const opening=(x)=>{ const w=W[x]; return w && w[1]===0 && (A[w[0]][1]===1 ? w[0]!==0 : w[0]===1); };
+  const vote=(filter)=>{ const votes=new Map();
+    for(let j=0;j+1<sp.length;j++){ if(sp[j].length<2||sp[j+1].length<2) continue; const l=WIDX.get(sp[j]+" "+sp[j+1]); if(!l) continue; for(const x of l){ const start=x-j; if(start<0||(filter&&!filter(start))) continue; votes.set(start,(votes.get(start)||0)+1); } }
+    let best=null, bv=0, second=0; for(const [x,v] of votes){ if(v>bv){ second=bv; bv=v; best=x; } else if(v>second) second=v; }
+    return {best,bv,second}; };
+  let r=ex.nBas?vote(opening):null;
+  if(!r||r.best==null||r.bv===r.second) r=vote(null);
+  const {best,bv,second}=r, minVotes=ex.nBas&&r.best!=null&&opening(r.best)?1:2;
+  if(best==null || bv<minVotes || bv===second){ if(pe) pe.textContent=bv===second&&bv>=2?"هالمقطع يتكرر، كمّل شوي…":"ما عرفتها بعد، كمّل…"; return; }
+  let [g,k]=W[best];
+  const fatiha=ex.nBas && g===1 && k===0; // «بسم الله…» then «الحمد لله»: al-Fatiha from its first ayah, the basmala
+  const first=fatiha?0:g;
+  const list=[]; for(let i=first;i<N&&A[i][0]===A[first][0];i++) list.push(i);
+  toast((ex.nBas&&(A[g][1]===1||fatiha)?"بداية سورة ":"عرفتها: سورة ")+surahName(A[first][0])+(ex.nBas&&(A[g][1]===1||fatiha)?"":"، آية "+AR(A[g][1])));
+  READ={kind:"range", s:A[first][0], a:A[first][1], b:A[list[list.length-1]][1], free:true};
+  const fin=VOICE.finals; VOICE.key=""; voicePrepare(list); VOICE.finals=fin;
+  VOICE.base=fatiha?VOICE.start[0]:VOICE.start[g]+k;
+  VOICE.skipSpoken=fatiha?ex.nIst:ex.n; render();
 }
 
 /* ----- accurate tasmee' (own site): letters, harakat, madd — tasmee-engine.js ----- */
@@ -733,9 +762,14 @@ function voiceSettings(){
     <div class="seg" style="margin-top:6px"><button data-stay="1" class="${S.stay!==false?"on":""}">أوقف عندي لين أعيدها</button><button data-stay="0" class="${S.stay===false?"on":""}">كمّل وعلّمها بالأحمر</button></div>
     <p class="sub" style="margin-top:12px">النص وقت التسميع</p>
     <div class="seg" style="margin-top:6px"><button data-showtext="0" class="${!VOICE.showText?"on":""}">مخفي</button><button data-showtext="1" class="${VOICE.showText?"on":""}">باهت</button></div>
+    ${acc?`<p class="sub" style="margin-top:12px">الحركات (الفتحة والضمة والكسرة والسكون والشدة)</p>
+    <div class="seg" style="margin-top:6px"><button data-harakat="0" class="${!S.harakat?"on":""}">لا تحاسبني عليها</button><button data-harakat="1" class="${S.harakat?"on":""}">حاسبني عليها</button></div>
+    <p class="sub" style="margin-top:12px">التجويد (المدود والغنة والقلقلة والإخفاء)</p>
+    <div class="seg" style="margin-top:6px"><button data-tajweed="0" class="${!S.tajweed?"on":""}">لا</button><button data-tajweed="1" class="${S.tajweed?"on":""}">نبهني عليه</button></div>
+    <p class="sub" style="margin-top:6px;font-size:12.5px">الحركات والتجويد أصعب على النموذج، فممكن يطلع ملاحظات غلط عليها. الكلمات والحروف أدق.</p>`:""}
     ${accAvailable()?`<p class="sub" style="margin-top:12px">دقة التسميع</p>
-    <div class="seg" style="margin-top:6px"><button data-engine="acc" class="${acc?"on":""}">حروف وحركات ومدود</button>${DICT?`<button data-engine="words" class="${!acc?"on":""}">كلمات بس</button>`:""}</div>
-    <p class="sub" style="margin-top:6px;font-size:12.5px">${acc?"يسمع كل حرف وحركة ومد، ويشتغل داخل جهازك بدون ما يطلع صوتك.":"أسرع وأخف، بس ما يكشف أخطاء الحركات والحروف."}</p>`:""}
+    <div class="seg" style="margin-top:6px"><button data-engine="acc" class="${acc?"on":""}">الكلمات والحروف</button>${DICT?`<button data-engine="words" class="${!acc?"on":""}">كلمات بس</button>`:""}</div>
+    <p class="sub" style="margin-top:6px;font-size:12.5px">${acc?"يسمع كل كلمة وحرف بنموذج متخصص في التلاوة، ويشتغل داخل جهازك بدون ما يطلع صوتك.":"أسرع وأخف، بس يقارن الكلمات بس."}</p>`:""}
     <button class="btn primary block" style="margin-top:16px" data-act="close-sheet">تم</button>`);
 }
 function accMicLabel(){ return ACC.loading?"أجهز…":ACC.listening?"أسمعك… ⏹ وقّف":(ACC.session&&ACC.session.state.some(x=>x)?"كمّل التسميع":"ابدأ التسميع"); }
@@ -759,7 +793,7 @@ function accMicClick(){
   if(!ACC.session || ACC.key!==accKey()){
     const ayat = kind==="free" ? null : readContext().idx;
     ACC.map.clear(); ACC.key=accKey(); ACC.passage=null;
-    ACC.opts={ayat, stay:S.stay!==false, surahOf:g=>A[g][0], isWaqf:(g,w)=>/[\u06D6-\u06DB]/.test(A[g][4].split(/\s+/)[w]||""), onEvent:accEvent, hear:window.__tasmeeTestHear};
+    ACC.opts={ayat, stay:S.stay!==false, harakat:!!S.harakat, tajweed:!!S.tajweed, surahOf:g=>A[g][0], isWaqf:(g,w)=>/[\u06D6-\u06DB]/.test(A[g][4].split(/\s+/)[w]||""), onEvent:accEvent, hear:window.__tasmeeTestHear};
     ACC.session=TasmeeEngine.Session(ACC.opts);
     if(ayat) ACC.passage=ACC.session.passage;
   }
@@ -787,9 +821,9 @@ function accEvent(e){
   if(e.type==="passage"){ ACC.passage=e.passage; return; }
   if(e.type==="found"){
     const g=e.ayah, P=ACC.passage, last=P.ayahIdx[P.ayahIdx.length-1];
-    toast("عرفتها: سورة "+surahName(A[g][0])+"، آية "+AR(A[g][1]));
+    toast(e.surahStart?"بداية سورة "+surahName(A[g][0]):"عرفتها: سورة "+surahName(A[g][0])+"، آية "+AR(A[g][1]));
     READ={kind:"range", s:A[g][0], a:A[g][1], b:A[last][1], free:true}; ACC.key=accKey(); render();
-    setAccStatus("سورة "+surahName(A[g][0])+"، آية "+AR(A[g][1])+" ✓ كمّل"); return;
+    setAccStatus((e.surahStart?"بداية سورة "+surahName(A[g][0]):"سورة "+surahName(A[g][0])+"، آية "+AR(A[g][1]))+" ✓ كمّل"); return;
   }
   if(e.type==="word"){
     const aw=awOf(e.word); const prev=ACC.map.get(aw);
@@ -808,7 +842,7 @@ function accEvent(e){
     else { const P=ACC.passage, k=e.stopAt>=0?e.stopAt:Math.min(P.words.length-1,e.to+1); const el=document.querySelector('[data-aw="'+awOf(k)+'"]'); if(el){ const r=el.getBoundingClientRect(); const tb=document.querySelector(".toolbar"); const top=tb?tb.getBoundingClientRect().bottom+10:120; if(r.bottom>innerHeight-150||r.top<top) el.scrollIntoView({block:"center",behavior:"smooth"}); } }
     return;
   }
-  if(e.type==="extra"){ setAccStatus(e.which==="basmala"?"البسملة ✓":"الاستعاذة ✓"); return; }
+  if(e.type==="extra"){ setAccStatus(e.which==="basmala"?(e.start?"البسملة ✓ اقرأ أول السورة":"البسملة ✓"):"الاستعاذة ✓"); return; }
   if(e.type==="short"){ setAccStatus("كمّل… أحتاج كلمات أكثر عشان أعرف الآية."); return; }
   if(e.type==="ambiguous"){ setAccStatus("هالمقطع يتكرر في أكثر من مكان، كمّل شوي عشان أعرف وين."); return; }
   if(e.type==="notfound"){ setAccStatus("ما عرفت الآية. اقرأ أوضح أو جملة أطول.", true); return; }
@@ -1030,6 +1064,8 @@ document.addEventListener("click", e=>{
   if(d.order){ const P=S||DRAFT; if(P.order!==d.order){ P.order=d.order; P.start=d.order==="back"?114:1; } if(S){READ=null;save();} render(); return; }
   if(d.themePick){ const P=S||DRAFT; if(P) P.theme=d.themePick; try{ localStorage.setItem("hifz-theme",d.themePick); }catch(e){} if(S) save(); applyTheme(); render(); return; }
   if(d.engine){ accStop(); stopDict(); S.engine=d.engine; save(); closeSheet(); render(); return; }
+  if(d.harakat!==undefined){ S.harakat=d.harakat==="1"; save(); if(ACC.opts) ACC.opts.harakat=S.harakat; voiceSettings(); return; }
+  if(d.tajweed!==undefined){ S.tajweed=d.tajweed==="1"; save(); if(ACC.opts) ACC.opts.tajweed=S.tajweed; voiceSettings(); return; }
   if(d.stay!==undefined){ S.stay=d.stay==="1"; save(); if(ACC.opts) ACC.opts.stay=S.stay; voiceSettings(); if(VOICE.T.length) voiceUpdate(); return; }
   if(d.showtext!==undefined){ VOICE.showText=d.showtext==="1"; const el=$("#ayahs"); if(el) el.classList.toggle("showtext",VOICE.showText); voiceSettings(); return; }
   if(d.aw && MODE==="voice"){ showWordNotes(d.aw); return; }
@@ -1063,7 +1099,7 @@ document.addEventListener("click", e=>{
   if(act==="audio-settings"){ audioSheet(); return; }
   if(act==="range-listen"){ const r=S.range; MODE="read"; REPS={}; go("read",{kind:"range",s:r.s,a:r.a,b:r.b}); playIdx(readContext().idx,{}); return; }
   if(act==="voice-hint"){ VOICE.hints.add(VOICE.p); voiceUpdate(); return; }
-  if(act==="voice-reset"){ stopDict(); VOICE.finals=""; VOICE.partial=""; VOICE.hints=new Set(); VOICE.ended=false; render(); return; }
+  if(act==="voice-reset"){ stopDict(); VOICE.finals=""; VOICE.partial=""; VOICE.hints=new Set(); VOICE.ended=false; VOICE.skipSpoken=0; if(READ&&READ.free){ READ={kind:"free"}; VOICE.key=""; } render(); return; }
   if(act==="voice-show"){ VOICE.showText=!VOICE.showText; const el=$("#ayahs"); if(el) el.classList.toggle("showtext",VOICE.showText); t.textContent=VOICE.showText?"اخفِ النص":"اعرض النص"; return; }
   if(act==="voice-weak"){ const pages=new Set(); VOICE.st.forEach((v,k)=>{ if(v===2) pages.add(A[VOICE.T[k].i][2]); }); for(const p of pages) S.weak[p]=(S.weak[p]||0)+1; save(); toast("سجلت "+pagesWord(pages.size)+" للتثبيت"); return; }
   if(act==="back"){ const k=READ&&READ.kind; READ=null; go(["new","near","far","weak"].includes(k)?"today":"read"); return; }
