@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>اختبار محرك التسميع</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:16px;line-height:1.6}
+pre{white-space:pre-wrap;direction:ltr;text-align:left;font-size:12px;background:#f4f4f4;padding:8px;border-radius:8px}
+.ok{color:#1d6a50}.bad{color:#b0463a}
+</style>
+</head>
+<body>
+<h1>اختبار محرك التسميع على تلاوات حقيقية</h1>
+<p>يحمّل النموذج، ويشغّله على تلاوات صحيحة (لازم ما يطلع أخطاء)، وعلى تلاوات فيها أخطاء مقصودة (لازم يكشفها).</p>
+<div id="out">جاري الاختبار…</div>
+<pre id="log"></pre>
+<script src="../tasmee-engine.js"></script>
+<script>
+"use strict";
+const log = (...a) => { document.getElementById("log").textContent += a.join(" ") + "\n"; };
+const RESULTS = { done: false, cases: [] };
+window.RESULTS = RESULTS;
+const RECITERS = { husary: "ar.husary", alafasy: "ar.alafasy", minshawi: "ar.minshawi" };
+async function audio16k(url) {
+  const r = await fetch(url); if (!r.ok) throw new Error("audio " + r.status);
+  const buf = await r.arrayBuffer();
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const dec = await ctx.decodeAudioData(buf); ctx.close();
+  const off = new OfflineAudioContext(1, Math.ceil(dec.duration * 16000), 16000);
+  const src = off.createBufferSource(); src.buffer = dec; src.connect(off.destination); src.start();
+  const out = await off.startRendering();
+  return out.getChannelData(0).slice(0);
+}
+async function main() {
+  const E = TasmeeEngine;
+  const Q = await (await fetch("../quran.json")).json();
+  await E.loadPhonetics("../phonetics.json");
+  const t0 = performance.now();
+  await E.loadModel((g, t) => { document.getElementById("out").textContent = "تحميل النموذج " + Math.round(g / 1048576) + " / " + Math.round(t / 1048576) + " MB"; });
+  log("model ready in", Math.round(performance.now() - t0), "ms");
+  const idx = (s, a) => Q.ayahs.findIndex(x => x[0] === s && x[1] === a);
+  const surahOf = g => Q.ayahs[g][0];
+  const PH = E.PH;
+  const params = new URLSearchParams(location.search);
+  const list = (params.get("ayat") || "1:2,1:5,1:7,112:1,112:2,112:3,112:4,113:1,114:4,67:2,2:255,36:1,36:5,18:10,55:13").split(",").map(x => x.split(":").map(Number));
+  const reciters = (params.get("reciters") || "husary,alafasy,minshawi").split(",");
+
+  async function judgeOne(samples, ayat, label, expectErr) {
+    let events = [];
+    const S = E.Session({ ayat, stay: false, surahOf, onEvent: e => { if (e.type !== "level") events.push(e); } });
+    await S.feed(samples);
+    const words = events.filter(e => e.type === "word");
+    const jali = words.filter(e => e.state === 2 || e.state === 5), khafi = words.filter(e => e.state === 3);
+    const lost = events.some(e => e.type === "lost");
+    return { words: words.length, jali: jali.length, khafi: khafi.length, lost, notes: words.filter(e => e.notes && e.notes.length).map(e => e.word + ":" + e.notes.map(n => n.severity + "/" + n.msg).join(";")) };
+  }
+
+  for (const rec of reciters) {
+    for (const [s, a] of list) {
+      const g = idx(s, a); if (g < 0) continue;
+      const url = "https://cdn.islamic.network/quran/audio/128/" + RECITERS[rec] + "/" + (g + 1) + ".mp3";
+      const c = { rec, ayah: s + ":" + a };
+      try {
+        const x = await audio16k(url);
+        c.secs = +(x.length / 16000).toFixed(1);
+        if (c.secs > 28) { c.skip = "too long for one breath"; RESULTS.cases.push(c); continue; }
+        const t = performance.now(); const h = await E.hear(x); c.ms = Math.round(performance.now() - t);
+        const ref = PH.ayat[g][0];
+        c.per = +(E.levDistance(ref, h.heard) / ref.length).toFixed(3);
+        c.heard = h.heard; c.ref = ref;
+        // 1. correct recitation: should give no clear mistakes
+        c.correct = await judgeOne(x, [g], "correct");
+        // 2. the same audio judged against another ayah of the same surah: must not pass as correct
+        const other = Q.ayahs[g + 1] && Q.ayahs[g + 1][0] === s ? g + 1 : g - 1;
+        c.wrongAyah = await judgeOne(x, [other], "wrong ayah");
+        // 3. a word cut out of the audio (by the model's own symbol times): must be reported
+        const sp = PH.ayat[g][1], nw = PH.ayat[g][3];
+        if (nw >= 3 && h.times.length > 2) {
+          const k = Math.floor(nw / 2); const ws = sp[2 * k], we = sp[2 * k + 1];
+          // map the word's reference span to heard positions through the alignment
+          const b = E.listen({ ph: ref, spans: [[0, ref.length]], units: [] }, h.heard, null, null, {}).b;
+          const hs = b[ws], he = b[we];
+          if (he > hs && he < h.times.length) {
+            const t0 = Math.max(0, h.times[hs] - 0.05), t1 = h.times[he] - 0.02;
+            const cut = new Float32Array(x.length - Math.round((t1 - t0) * 16000));
+            cut.set(x.subarray(0, Math.round(t0 * 16000))); cut.set(x.subarray(Math.round(t1 * 16000)), Math.round(t0 * 16000));
+            c.cutWord = k; c.cut = await judgeOne(cut, [g], "word cut");
+            c.cutCaught = c.cut.notes.some(n => n.startsWith(k + ":")) || c.cut.jali > 0;
+          }
+        }
+      } catch (e) { c.error = String(e && e.message || e); }
+      RESULTS.cases.push(c);
+      log(JSON.stringify({ rec: c.rec, ayah: c.ayah, secs: c.secs, ms: c.ms, per: c.per, correctJali: c.correct && c.correct.jali, correctKhafi: c.correct && c.correct.khafi, wrongAyahCaught: c.wrongAyah && (c.wrongAyah.lost || c.wrongAyah.jali > 0), cutCaught: c.cutCaught, error: c.error }));
+    }
+  }
+  // free start: find each ayah from its audio alone
+  let found = 0, tried = 0;
+  for (const c of RESULTS.cases) if (c.heard) { tried++; const f = E.findAyah(c.heard); const [s, a] = c.ayah.split(":").map(Number); if (f && !f.ambiguous && f.ayah === idx(s, a)) found++; else if (f && f.ambiguous) c.ambiguous = true; }
+  RESULTS.freeStart = { found, tried };
+  RESULTS.done = true;
+  const ok = RESULTS.cases.filter(c => c.correct);
+  const sum = {
+    cases: ok.length,
+    meanPER: +(ok.reduce((s, c) => s + c.per, 0) / ok.length).toFixed(4),
+    correctWithJali: ok.filter(c => c.correct.jali > 0).length,
+    jaliWordsOnCorrect: ok.reduce((s, c) => s + c.correct.jali, 0),
+    wordsJudged: ok.reduce((s, c) => s + c.correct.words, 0),
+    khafiWordsOnCorrect: ok.reduce((s, c) => s + c.correct.khafi, 0),
+    wrongAyahCaught: ok.filter(c => c.wrongAyah.lost || c.wrongAyah.jali > 0).length,
+    cutTried: ok.filter(c => c.cut).length, cutCaught: ok.filter(c => c.cutCaught).length,
+    freeStart: RESULTS.freeStart,
+    meanMs: Math.round(ok.reduce((s, c) => s + c.ms, 0) / ok.length),
+  };
+  RESULTS.summary = sum;
+  document.getElementById("out").innerHTML = "<pre>" + JSON.stringify(sum, null, 1) + "</pre>";
+}
+main().catch(e => { document.getElementById("out").textContent = "خطأ: " + e.message; RESULTS.error = String(e); RESULTS.done = true; });
+</script>
+</body>
+</html>
