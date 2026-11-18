@@ -321,26 +321,44 @@
   /** Semi-global alignment of `heard` inside ref[from, to): free end in the reference; the start is free up to `ptr`
    * (going back to repeat is normal) and costs 0.8 per sound after it (skipping ahead is a mistake, not a shortcut).
    * Without `ptr` the start is free everywhere (searching). Cheap substitution between two vowels / two length marks.
-   * → {s, e, cost} (ref slice) */
+   * Gaps in the reference are affine (open 2, then 0.35 a sound): a word left out is one gap, not a string of wrong
+   * letters, so the breath still lines up with the words after it. → {s, e, cost} (ref slice) */
   function locate(ref, from, to, heard, ptr) {
     const n = heard.length, m = to - from, W = m + 1;
     if (!n || m <= 0) return { s: from, e: from, cost: n };
-    const D = new Float32Array((n + 1) * W), S = new Int32Array((n + 1) * W);
-    for (let j = 0; j <= m; j++) { D[j] = ptr == null || from + j <= ptr ? 0 : (from + j - ptr) * 0.8; S[j] = j; }
-    for (let i = 1; i <= n; i++) {
-      D[i * W] = i; S[i * W] = 0; const h = heard[i - 1];
-      for (let j = 1; j <= m; j++) {
-        const r = ref[from + j - 1];
-        const c = h === r ? 0 : ((HARAKAT.has(h) && HARAKAT.has(r)) || (LONG.has(h) && LONG.has(r)) ? 0.5 : 1);
-        let best = D[(i - 1) * W + j - 1] + c, st = S[(i - 1) * W + j - 1];
-        const del = D[i * W + j - 1] + 1; if (del < best) { best = del; st = S[i * W + j - 1]; }
-        const ins = D[(i - 1) * W + j] + 1; if (ins < best) { best = ins; st = S[(i - 1) * W + j]; }
-        D[i * W + j] = best; S[i * W + j] = st;
+    const OPEN = 2, EXT = 0.35, INF = 1e9;
+    const M = new Float32Array((n + 1) * W).fill(INF), G = new Float32Array((n + 1) * W).fill(INF), I = new Float32Array((n + 1) * W).fill(INF);
+    const SM = new Int32Array((n + 1) * W), SG = new Int32Array((n + 1) * W), SI = new Int32Array((n + 1) * W);
+    for (let j = 0; j <= m; j++) { M[j] = ptr == null || from + j <= ptr ? 0 : (from + j - ptr) * 0.8; SM[j] = j; }
+    const best3 = (x) => { let v = M[x], st = SM[x]; if (G[x] < v) { v = G[x]; st = SG[x]; } if (I[x] < v) { v = I[x]; st = SI[x]; } return [v, st]; };
+    for (let i = 0; i <= n; i++) {
+      const h = i ? heard[i - 1] : "";
+      for (let j = 0; j <= m; j++) {
+        const x = i * W + j;
+        if (i > 0 && j > 0) { // heard i against ref j
+          const r = ref[from + j - 1];
+          const c = h === r ? 0 : ((HARAKAT.has(h) && HARAKAT.has(r)) || (LONG.has(h) && LONG.has(r)) ? 0.5 : 1);
+          const [v, st] = best3((i - 1) * W + j - 1); M[x] = v + c; SM[x] = st;
+        }
+        if (i > 0) { // heard i not in the reference
+          const y = (i - 1) * W + j; let v = M[y] + 1, st = SM[y];
+          if (I[y] + 1 < v) { v = I[y] + 1; st = SI[y]; } if (G[y] + 1 < v) { v = G[y] + 1; st = SG[y]; }
+          I[x] = v; SI[x] = st;
+        }
+        if (j > 0 && i > 0) { // ref j left out (a gap inside the breath)
+          const y = i * W + j - 1; let v = M[y] + OPEN, st = SM[y];
+          if (G[y] + EXT < v) { v = G[y] + EXT; st = SG[y]; } if (I[y] + OPEN < v) { v = I[y] + OPEN; st = SI[y]; }
+          G[x] = v; SG[x] = st;
+        }
       }
     }
-    let bj = 0, bc = Infinity;
-    for (let j = 0; j <= m; j++) { const c = D[n * W + j]; if (c < bc) { bc = c; bj = j; } }
-    return { s: from + S[n * W + bj], e: from + bj, cost: bc };
+    const endC = new Float32Array(m + 1), endS = new Int32Array(m + 1);
+    let bj = 0, bc = INF;
+    for (let j = 0; j <= m; j++) { const x = n * W + j; let v = M[x], st = SM[x]; if (I[x] < v) { v = I[x]; st = SI[x]; } endC[j] = v; endS[j] = st; if (v < bc) { bc = v; bj = j; } }
+    // a later end almost as good means the breath's last sounds matched real words further on (a word left out in
+    // between), not that the reciter stopped early with a garbled word: prefer it
+    for (let j = m; j > bj; j--) if (endC[j] <= bc + 2) { bj = j; break; }
+    return { s: from + endS[bj], e: from + bj, cost: endC[bj] };
   }
 
   /* ------------------------------------------------------------------ */
