@@ -239,24 +239,33 @@
    * (ibtida, often a few words back). Greedy: a split must explain at least `margin` more sounds. */
   function recited(P, ws, we, heard, startForm, endForm, isWaqf, back = 8, margin = 3) {
     let segs = [[ws, we, startForm, endForm]];
-    const cost = (sg) => levDistance(compose(P, sg).ph, heard);
-    let best = cost(segs);
-    if (we - ws > 80) return { segs, cost: best };
+    let cur = compose(P, segs), best = levDistance(cur.ph, heard);
+    if (best === 0 || we - ws > 120) return { segs, cost: best };
     for (let iter = 0; iter < 3; iter++) {
+      // only stops near where the breath disagrees with the expected script are worth trying
+      const hot = new Set();
+      for (const [t, i1, i2] of opcodes(cur.ph, heard)) {
+        if (t === "equal") continue;
+        let o1 = 0; while (o1 < cur.spans.length - 1 && cur.spans[o1][1] <= i1) o1++;
+        let o2 = o1; while (o2 < cur.spans.length - 1 && cur.spans[o2][1] < i2) o2++;
+        for (let o = Math.max(0, o1 - 2); o <= Math.min(cur.occ.length - 1, o2 + 1); o++) hot.add(cur.occ[o]);
+      }
       let cand = null, cc = best;
       for (let i = 0; i < segs.length; i++) {
         const [a, b, sf, ef] = segs[i];
         for (let k = a; k < b; k++) {          // stop on word k ...
+          if (!hot.has(k) && !hot.has(k + 1)) continue;
           for (let j = Math.max(a, k - back + 1); j <= k + 1; j++) { // ... start again from word j (j <= k: a repeat)
             const ns = segs.slice(0, i).concat([[a, k, sf, "W"], [j, b, "I", ef]], segs.slice(i + 1));
             // a stop where the mushaf marks a pause (ۚ ۖ ۗ ...) needs less evidence than one anywhere else
             const need = j === k + 1 && isWaqf && isWaqf(k) ? 1 : margin;
-            const c = cost(ns) + need - margin; if (c < cc) { cc = c; cand = ns; }
+            const c = levDistance(compose(P, ns).ph, heard) + need - margin; if (c < cc) { cc = c; cand = ns; }
           }
         }
       }
       if (!cand || cc > best - margin) break;
-      best = cc; segs = cand;
+      best = cc; segs = cand; cur = compose(P, segs);
+      if (best === 0) break;
     }
     return { segs, cost: best };
   }
