@@ -186,20 +186,79 @@
   };
 
   /** A passage: consecutive ayat (global indices into quran.json order) as one expected script. */
+  function unpackUnits(us, off, w0) {
+    return us.map(u => { const rule = u[5] >= 0 ? PH.rules[u[5]] : ""; return { s: u[0] + off, e: u[1] + off, kind: PH.kinds[u[2]], word: u[3] + w0, golden: u[4], rule, allowed: rule ? PH.allowed[u[5]] : [], char: u[6] }; });
+  }
   function buildPassage(ayahIdx) {
-    let ph = ""; const spans = [], units = [], words = [], ayahStart = [], ayahEnd = [];
+    let ph = ""; const spans = [], units = [], words = [], ayahStart = [], ayahEnd = [], forms = [], first = [], last = [];
     for (const g of ayahIdx) {
-      const [p, sp, us, nw, wm] = PH.ayat[g];
+      const [p, sp, us, nw, wm, fm] = PH.ayat[g];
       const off = ph.length, w0 = words.length;
       ayahStart.push(off);
-      for (let k = 0; k < nw; k++) { spans.push([sp[2 * k] + off, sp[2 * k + 1] + off]); words.push({ ayah: g, w: wm ? wm[k] : k }); }
+      for (let k = 0; k < nw; k++) {
+        spans.push([sp[2 * k] + off, sp[2 * k + 1] + off]); words.push({ ayah: g, w: wm ? wm[k] : k });
+        const f = fm && fm[k]; forms.push(f ? { W: f[0], Wu: f[1], I: f[2], Iu: f[3] } : null);
+        first.push(k === 0); last.push(k === nw - 1);
+      }
       for (const u of us) {
         const kind = PH.kinds[u[2]], rule = u[5] >= 0 ? PH.rules[u[5]] : "";
         units.push({ s: u[0] + off, e: u[1] + off, kind, word: u[3] + w0, golden: u[4], rule, allowed: rule ? PH.allowed[u[5]] : [], char: u[6] });
       }
       ph += p; ayahEnd.push(ph.length);
     }
-    return { ayahIdx, ph, spans, units, words, ayahStart, ayahEnd };
+    return { ayahIdx, ph, spans, units, words, ayahStart, ayahEnd, forms, first, last };
+  }
+
+  /** The expected script of a breath made of segments [a, b, startForm, endForm] (passage words a..b; 'I' = the
+   * first word as restarted (ibtida), 'W' = the last word as stopped on (waqf), 'c' = as inside the ayah).
+   * → {ph, spans, units, occ: passage word of each occurrence, segStart: [ph index], segEnd: [ph index]} */
+  function compose(P, segs) {
+    let ph = ""; const spans = [], units = [], occ = [], segStart = [], segEnd = [];
+    const addForm = (k, f, fu) => { const o = ph.length; ph += f; spans.push([o, ph.length]); occ.push(k); for (const u of unpackUnits(fu, o, 0)) units.push(Object.assign(u, { word: occ.length - 1 })); };
+    for (const [a, b, sf, ef] of segs) {
+      segStart.push(ph.length);
+      const useI = sf === "I" && P.forms[a] && P.forms[a].I, useW = ef === "W" && P.forms[b] && P.forms[b].W;
+      if (a === b && (useW || useI)) { const f = P.forms[a]; useW ? addForm(a, f.W, f.Wu) : addForm(a, f.I, f.Iu); segEnd.push(ph.length); continue; }
+      let x = a, y = b;
+      if (useI) { addForm(a, P.forms[a].I, P.forms[a].Iu); x = a + 1; }
+      if (useW) y = b - 1;
+      if (x <= y) {
+        const s0 = P.spans[x][0], e0 = P.spans[y][1], o = ph.length, w0 = occ.length;
+        ph += P.ph.slice(s0, e0);
+        for (let k = x; k <= y; k++) { spans.push([P.spans[k][0] - s0 + o, P.spans[k][1] - s0 + o]); occ.push(k); }
+        for (const u of P.units) if (u.s >= s0 && u.e <= e0 && u.word >= x && u.word <= y) units.push(Object.assign({}, u, { s: u.s - s0 + o, e: u.e - s0 + o, word: u.word - x + w0 }));
+      }
+      if (useW) addForm(b, P.forms[b].W, P.forms[b].Wu);
+      segEnd.push(ph.length);
+    }
+    units.sort((p, q) => p.s - q.s);
+    return { ph, spans, units, occ, segStart, segEnd };
+  }
+
+  /** Port of imam.recited(): where inside one breath the reciter stopped (waqf) and from where they started again
+   * (ibtida, often a few words back). Greedy: a split must explain at least `margin` more sounds. */
+  function recited(P, ws, we, heard, startForm, endForm, isWaqf, back = 8, margin = 3) {
+    let segs = [[ws, we, startForm, endForm]];
+    const cost = (sg) => levDistance(compose(P, sg).ph, heard);
+    let best = cost(segs);
+    if (we - ws > 80) return { segs, cost: best };
+    for (let iter = 0; iter < 3; iter++) {
+      let cand = null, cc = best;
+      for (let i = 0; i < segs.length; i++) {
+        const [a, b, sf, ef] = segs[i];
+        for (let k = a; k < b; k++) {          // stop on word k ...
+          for (let j = Math.max(a, k - back + 1); j <= k + 1; j++) { // ... start again from word j (j <= k: a repeat)
+            const ns = segs.slice(0, i).concat([[a, k, sf, "W"], [j, b, "I", ef]], segs.slice(i + 1));
+            // a stop where the mushaf marks a pause (ۚ ۖ ۗ ...) needs less evidence than one anywhere else
+            const need = j === k + 1 && isWaqf && isWaqf(k) ? 1 : margin;
+            const c = cost(ns) + need - margin; if (c < cc) { cc = c; cand = ns; }
+          }
+        }
+      }
+      if (!cand || cc > best - margin) break;
+      best = cc; segs = cand;
+    }
+    return { segs, cost: best };
   }
 
   /* ------------------------------------------------------------------ */
@@ -339,6 +398,7 @@
         let [n, rs, re] = run(heard, Math.max(0, hs - 1), Math.min(heard.length, he + 1), u.char);
         if (u.rule.startsWith("Leen") && n > 0) n += 1;
         if (unit && (n === 4 || n === 5) && times) { const tc = dur(heard, times, rs, re) / unit; n = tc >= TIME_SIX ? 6 : tc >= TIME_FIVE ? 5 : 4; }
+        else if (opts.capLenient !== false && (n === 4 || n === 5) && u.allowed.some(a => a >= 6)) n = Math.max(n, Math.min(...u.allowed.filter(a => a >= n))); // no clock yet: 4 symbols may be a held 6
         const allowed = u.allowed; let near = allowed[0]; for (const a of allowed) if (Math.abs(a - n) < Math.abs(near - n)) near = a;
         const name = MADD_NAME[u.rule] || "المد";
         if (n === 0 && !u.rule.startsWith("Leen")) add(u.word, u.rule, "jali", name + ": المد محذوف");
@@ -424,11 +484,13 @@
   /** heard phonemes → best {ayah, score} or {ambiguous:true} or null */
   function findAyah(heard) {
     buildIndex();
-    const sk = skeleton(heard); if (sk.length < 6) return null;
+    const sk = skeleton(heard); if (sk.length < 6) return { short: true };
     const votes = new Map();
     for (let i = 0; i + 4 <= sk.length; i++) { const l = INDEX.get(sk.slice(i, i + 4)); if (!l || l.length > 400) continue; for (const g of l) votes.set(g, (votes.get(g) || 0) + 1); }
-    // a breath may run into the next ayah: give ayah g the votes of g+1 too
-    const cand = [...votes.entries()].map(([g, v]) => [g, v + 0.5 * (votes.get(g + 1) || 0)]).sort((a, b) => b[1] - a[1]).slice(0, 25);
+    // a breath may run into the next ayah: give ayah g the votes of g+1 too (and try g-1 for every voted g: a very
+    // short ayah such as «يسٓ» has no 4-grams of its own)
+    const pool = new Set(); for (const g of votes.keys()) { pool.add(g); if (g > 0) pool.add(g - 1); }
+    const cand = [...pool].map(g => [g, (votes.get(g) || 0) + 0.5 * (votes.get(g + 1) || 0)]).sort((a, b) => b[1] - a[1]).slice(0, 30);
     const scored = [];
     for (const [g] of cand) {
       const ref = PH.ayat[g][0] + (PH.ayat[g + 1] ? PH.ayat[g + 1][0] : "");
@@ -558,6 +620,7 @@
         const h = pendingHeard + heard;
         const f = findAyah(h);
         if (!f) { pendingHeard = ""; emit("notfound", { heard }); return; }
+        if (f.short) { pendingHeard = h; emit("short", {}); return; }
         if (f.ambiguous) { pendingHeard = h.slice(-400); emit("ambiguous", {}); return; }
         pendingHeard = "";
         const g = f.ayah, list = []; // from this ayah to the end of its surah
@@ -578,34 +641,54 @@
         const wide = locate(P.ph, 0, P.ph.length, heard);
         if (wide.cost / heard.length < score - 0.1) { loc = wide; score = wide.cost / heard.length; }
       }
-      if (score > 0.45) { if (!interim) emit("lost", { heard, score }); return; }
+      const maxScore = heard.length < 15 ? 0.3 : 0.45; // a short breath must match closely
+      if (score > maxScore) { if (!interim) emit("lost", { heard, score }); return; }
       // snap the slice to whole words
       let ws = wordAt(loc.s), we = wordAt(Math.max(loc.s, loc.e - 1));
       if (loc.e < P.spans[we][1] - Math.max(2, (P.spans[we][1] - P.spans[we][0]) * 0.4)) we--; // the last word was cut off
       if (we < ws) { if (!interim) emit("lost", { heard, score }); return; }
-      const rs = P.spans[ws][0], re = P.spans[we][1];
 
       if (interim) { // live: only show which words were heard, judge at the pause
         for (let k = ws; k <= we; k++) if (state[k] === 0) emit("heard", { word: k });
         return;
       }
-      // the reference for this breath: words ws..we, units inside, positions relative to rs
-      const ref = { ph: P.ph.slice(rs, re), spans: [], units: [], words: [] };
-      for (let k = ws; k <= we; k++) { ref.spans.push([P.spans[k][0] - rs, P.spans[k][1] - rs]); ref.words.push(k); }
-      for (const u of P.units) if (u.s >= rs && u.e <= re) ref.units.push(Object.assign({}, u, { s: u.s - rs, e: u.e - rs, word: u.word - ws }));
-      // ayah boundaries inside the breath: a reciter joining two ayat changes the end / start sounds (waqf, hamzat wasl)
-      const grace = new Set();
-      for (let a = 0; a < P.ayahStart.length; a++) {
-        const s0 = P.ayahStart[a] - rs, e0 = P.ayahEnd[a] - rs;
-        for (let x = s0; x < s0 + 3; x++) grace.add(x);
-        for (let x = e0 - 3; x < e0; x++) grace.add(x);
+      // words jumped over between where the reciter was expected and where this breath starts: not recited
+      const pw = ptr < P.ph.length ? wordAt(ptr) : P.words.length;
+      if (ws > pw) {
+        for (let k = pw; k < ws; k++) if (state[k] !== 1 && state[k] !== 3 && state[k] !== 4 && state[k] !== 6) {
+          state[k] = 5; wordNotes[k] = [{ rule: "word", severity: "jali", pos: P.spans[k][0], msg: "ما قريت هالكلمة" }];
+          emit("word", { word: k, state: 5, notes: wordNotes[k] });
+        }
+        if (opts.stay) { ptr = P.spans[pw][0]; emit("breath", { heard, ms, from: ws, to: we, stopAt: pw, done: false }); return; }
       }
+      // the breath as recited: restarted at ws (unless an ayah starts there), stopped on we (unless an ayah ends there),
+      // plus any stop / restart inside it
+      // the first / last word of the breath: restart / stop forms, or as joined if that matches the reciter better
+      let sf = "c", ef = "c", bestC = Infinity;
+      for (const a of P.first[ws] ? ["c"] : ["I", "c"]) for (const b of P.last[we] ? ["c"] : ["W", "c"]) {
+        const c = levDistance(compose(P, [[ws, we, a, b]]).ph, heard); if (c < bestC) { bestC = c; sf = a; ef = b; }
+      }
+      const { segs } = recited(P, ws, we, heard, sf, ef, opts.isWaqf ? (k) => opts.isWaqf(P.words[k].ayah, P.words[k].w) : null);
+      const ref = compose(P, segs);
+      // around ayah boundaries and stops a reciter's join / pause changes a few sounds: not judged as clear mistakes
+      const grace = new Set();
+      const mark = (a, b) => { for (let x = a; x < b; x++) grace.add(x); };
+      ref.occ.forEach((k, o) => { const [a, b] = ref.spans[o]; if (P.first[k]) mark(a, a + 3); if (P.last[k]) mark(b - 3, b); });
+      for (const x of ref.segStart) mark(x, x + 3);
+      for (const x of ref.segEnd) mark(x - 3, x);
       const { notes } = listen(ref, heard, probs, times, { tempo, endGrace: 3, skip: (i) => grace.has(i) });
 
-      // apply, in order; with "stay", stop at the first clear mistake
+      // apply, in recitation order (a repeated word: its later reading counts); with "stay", stop at the first clear
+      // mistake that was not put right later in the same breath
+      const lastOcc = new Map(); ref.occ.forEach((k, o) => lastOcc.set(k, o));
       let stopAt = -1;
-      for (let k = ws; k <= we; k++) {
-        const n = notes[k - ws], jali = n.some(x => x.severity === "jali"), skipped = n.some(x => x.rule === "word");
+      for (let o = 0; o < ref.occ.length; o++) {
+        const k = ref.occ[o];
+        if (lastOcc.get(k) !== o) { // an earlier reading of a repeated word
+          const n0 = notes[o]; if (n0.some(x => x.severity === "jali") && state[k] !== 2) { state[k] = 2; wordNotes[k] = n0; }
+          continue;
+        }
+        const n = notes[o], jali = n.some(x => x.severity === "jali"), skipped = n.some(x => x.rule === "word");
         if (opts.stay && stopAt >= 0) { if (state[k] === 0) emit("word", { word: k, state: 0, notes: [] }); continue; }
         const prev = state[k];
         let st = skipped ? 5 : jali ? 2 : n.length ? 3 : 1;
@@ -614,8 +697,8 @@
         emit("word", { word: k, state: st, notes: n, prev });
         if (opts.stay && (st === 2 || st === 5)) stopAt = k;
       }
-      ptr = stopAt >= 0 ? P.spans[stopAt][0] : re;
-      emit("breath", { heard, ms, from: ws, to: we, stopAt, done: ptr >= P.ph.length });
+      ptr = stopAt >= 0 ? P.spans[stopAt][0] : P.spans[we][1];
+      emit("breath", { heard, ms, from: ws, to: we, stopAt, done: ptr >= P.ph.length, segs: segs.length });
     }
 
     async function pump() {
@@ -638,5 +721,5 @@
     };
   }
 
-  global.TasmeeEngine = { loadModel, loadPhonetics, hear, logMel, opcodes, levDistance, locate, listen, buildPassage, findAyah, skeleton, Session, Recorder, PHONEMES, get PH() { return PH; } };
+  global.TasmeeEngine = { loadModel, loadPhonetics, hear, logMel, opcodes, levDistance, locate, listen, buildPassage, compose, recited, findAyah, skeleton, Session, Recorder, PHONEMES, get PH() { return PH; } };
 })(typeof window !== "undefined" ? window : globalThis);

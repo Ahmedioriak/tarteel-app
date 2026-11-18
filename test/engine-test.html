@@ -44,12 +44,12 @@ async function main() {
   const surahOf = g => Q.ayahs[g][0];
   const PH = E.PH;
   const params = new URLSearchParams(location.search);
-  const list = (params.get("ayat") || "1:2,1:5,1:7,112:1,112:2,112:3,112:4,113:1,114:4,67:2,2:255,36:1,36:5,18:10,55:13").split(",").map(x => x.split(":").map(Number));
+  const list = (params.get("ayat") || "1:2,1:5,1:7,2:2,2:5,3:8,4:1,7:23,12:4,17:24,18:10,19:4,20:25,23:1,25:63,36:1,36:5,36:82,55:13,55:26,56:7,67:2,78:1,93:5,97:1,103:3,108:1,112:1,112:3,113:1,114:4").split(",").map(x => x.split(":").map(Number));
   const reciters = (params.get("reciters") || "husary,alafasy,minshawi").split(",");
 
   async function judgeOne(samples, ayat, label, expectErr) {
     let events = [];
-    const S = E.Session({ ayat, stay: false, surahOf, onEvent: e => { if (e.type !== "level") events.push(e); } });
+    const S = E.Session({ ayat, stay: false, surahOf, isWaqf: (g, w) => /[\u06D6-\u06DB]/.test(Q.ayahs[g][4].split(/\s+/)[w] || ""), onEvent: e => { if (e.type !== "level") events.push(e); } });
     await S.feed(samples);
     const words = events.filter(e => e.type === "word");
     const jali = words.filter(e => e.state === 2 || e.state === 5), khafi = words.filter(e => e.state === 3);
@@ -83,10 +83,10 @@ async function main() {
           const b = E.listen({ ph: ref, spans: [[0, ref.length]], units: [] }, h.heard, null, null, {}).b;
           const hs = b[ws], he = b[we];
           if (he > hs && he < h.times.length) {
-            const t0 = Math.max(0, h.times[hs] - 0.05), t1 = h.times[he] - 0.02;
-            const cut = new Float32Array(x.length - Math.round((t1 - t0) * 16000));
-            cut.set(x.subarray(0, Math.round(t0 * 16000))); cut.set(x.subarray(Math.round(t1 * 16000)), Math.round(t0 * 16000));
-            c.cutWord = k; c.cut = await judgeOne(cut, [g], "word cut");
+            const i0 = Math.max(0, Math.round((h.times[hs] - 0.05) * 16000)), i1 = Math.min(x.length, Math.round((h.times[he] - 0.02) * 16000));
+            const cut = new Float32Array(x.length - (i1 - i0));
+            cut.set(x.subarray(0, i0)); cut.set(x.subarray(i1), i0);
+            c.cutWord = k; c.cut = await judgeOne(cut, [g], "word cut"); c.cutHeard = (await E.hear(cut)).heard;
             c.cutCaught = c.cut.notes.some(n => n.startsWith(k + ":")) || c.cut.jali > 0;
           }
         }

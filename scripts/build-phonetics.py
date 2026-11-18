@@ -157,6 +157,26 @@ def word_map(ref_words, disp_words):
     return out
 
 
+def word_forms(words, ph, spans, m):
+    """For every word: how it sounds when the reciter stops on it (waqf) and when they start again from it (ibtida),
+    each with its own tajweed units, relative to the word. '' when it sounds the same as inside the ayah.
+    The waqf form takes the previous word as context, the ibtida form the next one."""
+    out = []
+    for k in range(len(words)):
+        ctx = ph[spans[k][0] : spans[k][1]]
+        res = []
+        for lo, hi, me in ((max(0, k - 1), k + 1, min(k, 1)), (k, min(len(words), k + 2), 0)):
+            p2, sp2, un2 = expected(words[lo:hi], m)
+            a, b = sp2[me]
+            form = p2[a:b]
+            units = [u for u in un2 if u["word"] == me and u["s"] >= a and u["e"] <= b]
+            for u in units:
+                u["s"] -= a; u["e"] -= a; u["word"] = 0
+            res.append(("", []) if form == ctx else (form, pack_units(units)))
+        out.append([res[0][0], res[0][1], res[1][0], res[1][1]] if (res[0][0] or res[1][0]) else 0)
+    return out
+
+
 def main():
     quran = json.loads((ROOT / "quran.json").read_text("utf8"))
     m = moshaf()
@@ -168,8 +188,8 @@ def main():
             ph, spans, units = expected(words, m)
             entry = [ph, [x for sp in spans for x in sp], pack_units(units), len(words)]
             disp = quran["ayahs"][len(ayat)][4].split()
-            if len(disp) != len(words):
-                entry.append(word_map(words, disp))
+            entry.append(word_map(words, disp) if len(disp) != len(words) else 0)
+            entry.append(word_forms(words, ph, spans, m))
             ayat.append(entry)
         print(f"\r{s}/114", end="", file=sys.stderr)
     print(file=sys.stderr)

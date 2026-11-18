@@ -759,7 +759,7 @@ function accMicClick(){
   if(!ACC.session || ACC.key!==accKey()){
     const ayat = kind==="free" ? null : readContext().idx;
     ACC.map.clear(); ACC.key=accKey(); ACC.passage=null;
-    ACC.opts={ayat, stay:S.stay!==false, surahOf:g=>A[g][0], onEvent:accEvent, hear:window.__tasmeeTestHear};
+    ACC.opts={ayat, stay:S.stay!==false, surahOf:g=>A[g][0], isWaqf:(g,w)=>/[\u06D6-\u06DB]/.test(A[g][4].split(/\s+/)[w]||""), onEvent:accEvent, hear:window.__tasmeeTestHear};
     ACC.session=TasmeeEngine.Session(ACC.opts);
     if(ayat) ACC.passage=ACC.session.passage;
   }
@@ -809,6 +809,7 @@ function accEvent(e){
     return;
   }
   if(e.type==="extra"){ setAccStatus(e.which==="basmala"?"البسملة ✓":"الاستعاذة ✓"); return; }
+  if(e.type==="short"){ setAccStatus("كمّل… أحتاج كلمات أكثر عشان أعرف الآية."); return; }
   if(e.type==="ambiguous"){ setAccStatus("هالمقطع يتكرر في أكثر من مكان، كمّل شوي عشان أعرف وين."); return; }
   if(e.type==="notfound"){ setAccStatus("ما عرفت الآية. اقرأ أوضح أو جملة أطول.", true); return; }
   if(e.type==="lost"){ const P=ACC.passage; let msg="اللي قريته ما طابق المكان المتوقع."; if(P){ const k=P.words.findIndex((w,i)=>P.spans[i][0]>=ACC.session.pointer); if(k>=0) msg+=" ارجع من «"+wordText(awOf(k))+"»."; } setAccStatus(msg, true); return; }
