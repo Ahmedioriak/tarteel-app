@@ -1,0 +1,16 @@
+{
+  "name": "rafiq-alhifz",
+  "version": "1.0.0",
+  "private": true,
+  "description": "رفيق الحفظ: تطبيق ويب لحفظ القرآن الكريم ومراجعته يومياً",
+  "type": "module",
+  "scripts": {
+    "build-data": "node scripts/build-data.mjs",
+    "start": "python3 -m http.server 8080"
+  },
+  "devDependencies": {
+    "@muslims-community/quran": "^1.1.0",
+    "quran-json": "^3.1.2",
+    "quran-meta": "^7.0.0"
+  }
+}
