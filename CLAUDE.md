@@ -34,6 +34,13 @@ Test both: a change to audio or speech must keep the artifact path working, and 
 - A breath that opens with the isti'adha / basmala is stripped (`extraPrefix`) unless the passage expects it there (1:1, 27:30). In free mode a basmala restricts the search to surah openings (al-Fatiha: 1:2, with the basmala judged as 1:1). The word-level path does the same (`stripExtras`, `freeFindWords`).
 - Checks before shipping a change to the engine: `listen()` must stay identical to the Python reference on the random cases (`capLenient:false`), and `test/engine-test.html` on real EveryAyah audio must keep clear mistakes on correct recitations near zero.
 
+## Server checker (`quran_recitation/`)
+
+- Installed unchanged from the user's `install_quran_site.py` (sha256 of every file matches the installer's `CHECKSUMS`). Its own instructions are in `quran_recitation/CLAUDE.md`.
+- Python server (FastAPI) + `obadx/muaalem-model-v3_2` (~2.42 GB, torch CPU). Not part of the artifact or GitHub Pages; never publish these files to the artifact.
+- Tests without the model: `python3 quran_recitation/tests/logic_test.py` and `python3 quran_recitation/tests/service_test.py` (a stand-in model hears a given phonetic string; everything after the model runs for real). Run both after any change to `quran_checker.py` or `service.py`.
+- Not yet connected to `index.html`. Connecting it needs a hosted endpoint (HTTPS) and a fallback to the in-browser engine when the server is down.
+
 ## Things to keep
 
 - User progress lives in the artifact's `db` at `data/users/<id>/hifz`. Never change that path or the state shape without a migration, or people lose their progress.

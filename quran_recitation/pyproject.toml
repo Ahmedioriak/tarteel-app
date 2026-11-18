@@ -1,0 +1,14 @@
+[project]
+name = "quran-recitation-web"
+version = "1.0.0"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+  "quran-muaalem==0.3.0", "quran-transcript==0.6.4", "transformers==4.55.4", "torch==2.7.1",
+  "numpy>=2.2.6,<3", "imageio-ffmpeg>=0.6,<0.7", "fastapi==0.141.1", "uvicorn==0.52.1", "sounddevice>=0.5,<0.6",
+]
+[tool.uv.sources]
+torch = [{index = "pytorch-cpu", marker = "(sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')"}]
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

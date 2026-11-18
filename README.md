@@ -54,6 +54,15 @@ python3 -m http.server 8080
 
 اختبار على تلاوات حقيقية: افتح `test/engine-test.html` من موقعك.
 
+## فاحص التلاوة على خادم (`quran_recitation/`)
+
+نسخة أكبر من الفحص الدقيق، تشتغل على **خادم Python** مو داخل المتصفح. تستخدم النموذج الكامل [obadx/muaalem-model-v3_2](https://github.com/obadx/quran-muaalem) (حوالي ٢٫٤ غيغا، وهو نفس النموذج اللي تعلّم منه نموذج التطبيق الصغير). ترفع تسجيل أو تسجّل، وترجع لك كل كلمة فيها اختلاف: المتوقع، اللي سمعه، ووقته في التسجيل.
+
+- ما يشتغل على GitHub Pages ولا داخل Claude، لازم جهاز أو خادم يشغّل Python.
+- التشغيل: من مجلد `quran_recitation` نفّذ `uv run python service.py` وافتح `http://127.0.0.1:8000/recitation/` (أول مرة ينزّل النموذج).
+- اختبارات بدون النموذج (منطق المقارنة والـ API فقط): `python3 quran_recitation/tests/logic_test.py` و `python3 quran_recitation/tests/service_test.py`.
+- التفاصيل وطريقة ربطه بموقع: `quran_recitation/CLAUDE.md`.
+
 ## مصادر البيانات
 
 - **نص المصحف:** الرسم العثماني من [موسوعة القرآن الكريم (QuranEnc)](https://quranenc.com)، عن طريق حزمة [`quran-json`](https://www.npmjs.com/package/quran-json).
