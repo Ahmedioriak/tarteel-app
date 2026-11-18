@@ -365,7 +365,7 @@
   function dur(heard, times, s, e) { const a = s && HARAKAT.has(heard[s - 1]) ? times[s - 1] : times[s]; return Math.max(0, times[Math.min(e, times.length - 1)] - a); }
   function tempoOf(ref, heard, b, times, tempo) {
     if (!times || times.length !== heard.length + 1) return null;
-    const last = ref.words.length - 1; const nat = [];
+    const last = ref.spans.length - 1; const nat = [];
     for (const u of ref.units) if (u.kind === "madd" && u.rule === "NormalMaddRule" && u.word !== last) {
       const [n, s, e] = run(heard, Math.max(0, b[u.s] - 1), Math.min(heard.length, b[u.e] + 1), u.char);
       if (n >= 1 && n <= 3) nat.push(dur(heard, times, s, e));

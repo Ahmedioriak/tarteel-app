@@ -25,6 +25,13 @@ The version shown at the bottom of the plan screen must match the latest commit'
 - **Own site (GitHub Pages, https://ahmedioriak.github.io/tarteel-app/):** `STANDALONE` is true. Progress in `localStorage`, in-app audio player (EveryAyah per-ayah MP3s, Islamic Network CDN as fallback), recitation checking through the browser's Web Speech API (`webSpeechAdapter`, `ar-SA`).
 Test both: a change to audio or speech must keep the artifact path working, and the reverse.
 
+## Accurate recitation checking (own site only)
+
+- `tasmee-engine.js` + `phonetics.json` load only when `STANDALONE` (needs the mic and the model from huggingface.co, both blocked inside Claude).
+- Model: `HisnLabs/tajweed-v2` `onnx/model-int8.onnx`, onnxruntime-web from jsDelivr, cached in Cache Storage.
+- `phonetics.json` is built by `scripts/build-phonetics.py` (≈8 min). Rebuild it whenever `quran.json` changes.
+- Checks before shipping a change to the engine: `listen()` must stay identical to the Python reference on the random cases (`capLenient:false`), and `test/engine-test.html` on real EveryAyah audio must keep clear mistakes on correct recitations near zero.
+
 ## Things to keep
 
 - User progress lives in the artifact's `db` at `data/users/<id>/hifz`. Never change that path or the state shape without a migration, or people lose their progress.
