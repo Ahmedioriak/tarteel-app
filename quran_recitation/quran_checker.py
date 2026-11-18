@@ -294,6 +294,44 @@ SPELLING = str.maketrans({"إ": "ء", "أ": "ء", "ؤ": "ء", "ئ": "ء", "آ": 
 CONSONANTS = set("ءبتثجحخدذرزسشصضطظعغفقكلمنهوي")
 
 
+# Words only (the default): a finding only when a word's letters change. Vowels, tanween, shadda, lengths,
+# qalqalah, hamza, tajweed and sifat are not judged; letters the model mixes up count as one letter.
+CLOSE_LETTERS = str.maketrans({"ه": "ح", "ص": "س", "ث": "س", "ذ": "د", "ز": "د", "ض": "د", "ظ": "د",
+                               "ط": "ت", "ق": "ك", "غ": "خ", "ں": "ن", "۾": "م"})
+WORD_LETTERS = set("بتثجحخدذرزسشصضطظعغفقكلمنهويں۾")
+NASAL_ONLY = {"", "ن", "م"}  # a tanween said or left out; a noon / meem in idgham, ikhfa or iqlab
+
+
+def letter_key(text):
+    """The letters of a phonetic string: a doubled letter (shadda) once, close letters as one."""
+    out, prev = [], ""
+    for c in text:
+        if c == "ڇ":
+            continue
+        if c not in WORD_LETTERS:
+            prev = ""
+            continue
+        c = c.translate(CLOSE_LETTERS)
+        if c != prev:
+            out.append(c)
+        prev = c
+    return "".join(out)
+
+
+def word_changed(ref_ph, start, end, expected, heard):
+    """Did this difference change the word's letters? Compared with the letters on each side."""
+    if letter_key(expected) in NASAL_ONLY and letter_key(heard) in NASAL_ONLY:
+        return False
+    lo = start - 1
+    while lo > 0 and ref_ph[lo] not in WORD_LETTERS:
+        lo -= 1
+    hi = end
+    while hi < len(ref_ph) - 1 and ref_ph[hi] not in WORD_LETTERS:
+        hi += 1
+    left, right = ref_ph[max(lo, 0):start], ref_ph[end:hi + 1]
+    return letter_key(left + expected + right) != letter_key(left + heard + right)
+
+
 def retrieval_key(text):
     return phone_key("".join(c for c in text.translate(SPELLING) if c in CONSONANTS))
 
@@ -597,7 +635,7 @@ def check_attributes(ref, breath, pairs, words):
     return differences, report
 
 
-def assess(quran, words, breath):
+def assess(quran, words, breath, harakat=False):
     from quran_transcript import explain_error
     text = joined(words)
     header = {"first_ayah": words[0].ref, "last_ayah": words[-1].ref,
@@ -632,9 +670,12 @@ def assess(quran, words, breath):
         indices, pos = event_positions(pairs, *err.ph_pos, len(breath.phones))
         evidence = [breath.phones[j].strength for j in indices]
         is_clear = bool(evidence) and min(evidence) >= PHONE_FLOOR and err.speech_error_type != "delete"
-        names = rule_names(err)
+        start, end = err.ph_pos
+        if not harakat and not word_changed(ref.phonemes, start, end, err.expected_ph, detected):
+            continue
+        names = rule_names(err) if harakat else []
         finding = {**locate_word(words, err.uthmani_pos[0]), "kind": err.error_type,
-                   "label": "، ".join(names) or labels.get(err.error_type, err.error_type),
+                   "label": "، ".join(names) or (labels.get(err.error_type, err.error_type) if harakat else "الكلمة"),
                    "operation": ops.get(err.speech_error_type, err.speech_error_type),
                    "expected": expected, "heard": heard, "expected_phonemes": err.expected_ph,
                    "heard_phonemes": detected, "near_s": round(breath.phones[pos].time, 2),
@@ -643,20 +684,28 @@ def assess(quran, words, breath):
             finding.update(model_expected_count=err.expected_len, model_heard_count=err.predicted_len)
         findings.append(finding)
     attributes, coverage = check_attributes(ref, breath, pairs, words)
-    findings.extend(attributes)
+    if harakat:
+        findings.extend(attributes)
     low = {}
     for r, p in pairs:
         if r is None or p is None or breath.phones[p].strength >= PHONE_FLOOR:
             continue
+        if not harakat and breath.heard[p] not in WORD_LETTERS:
+            continue  # a weak vowel or length: not judged
         low[p] = round(breath.phones[p].time, 2)
+    if harakat:
+        differs = ref.phonemes != breath.heard
+    else:
+        letters = lambda x: letter_key(x).replace("ن", "").replace("م", "")
+        differs = letters(ref.phonemes) != letters(breath.heard)
     status = "no_difference_detected"
     if any(f["status"] == "possible_difference" for f in findings):
         status = "possible_difference"
-    elif findings or low or ref.phonemes != breath.heard:
+    elif findings or low or differs:
         status = "review"
     result = {**header, "status": status, "findings": findings, "sifat_coverage": coverage,
               "weak_audio_times_s": list(low.values())}
-    if ref.phonemes != breath.heard and not findings:
+    if differs and not findings:
         result["reason"] = "ظهر اختلاف في الأصوات تعذّر إسناده إلى كلمة بثقة."
     return result
 
@@ -665,7 +714,7 @@ def weak_breath(b):
     return not b.phones or median(e.strength for e in b.phones) < PHONE_FLOOR
 
 
-def manual_results(quran, words, breaths):
+def manual_results(quran, words, breaths, harakat=False):
     if any(weak_breath(b) for b in breaths):
         return [{"status": "review", "first_ayah": words[0].ref, "last_ayah": words[-1].ref,
                  "reason": "يوجد مقطع فارغ أو ضعيف. تعذّرت مطابقة التسجيل كاملاً بالمرجع."}]
@@ -673,10 +722,10 @@ def manual_results(quran, words, breaths):
     if groups is None:
         return [{"status": "review", "first_ayah": words[0].ref, "last_ayah": words[-1].ref,
                  "reason": "موضع الوقف داخل النص غير محسوم. افحص كل نَفَس على حدة وحدد كلماته بخيار --words."}]
-    return [assess(quran, group, b) for group, b in zip(groups, breaths)]
+    return [assess(quran, group, b, harakat) for group, b in zip(groups, breaths)]
 
 
-def auto_results(quran, breaths):
+def auto_results(quran, breaths, harakat=False):
     if len(breaths) > 1 and not any(weak_breath(b) for b in breaths):
         # A long ayah may require several breaths. Verify the internal word cuts.
         whole = [e for b in breaths for e in b.phones]
@@ -687,7 +736,7 @@ def auto_results(quran, breaths):
                 words = quran.words(s, a, a)
                 groups = assign_breaths(quran, words, breaths)
                 if groups:
-                    return [assess(quran, g, b) for g, b in zip(groups, breaths)]
+                    return [assess(quran, g, b, harakat) for g, b in zip(groups, breaths)]
     results = []
     for b in breaths:
         span = {"start_s": round(b.start, 2), "end_s": round(b.end, 2)}
@@ -701,7 +750,7 @@ def auto_results(quran, breaths):
                             "reason": "للتقييم حدّد المرجع بخيار --ayah، ولجزء من آية أضف --words."})
             continue
         s, a = place
-        results.append(assess(quran, quran.words(s, a, a), b))
+        results.append(assess(quran, quran.words(s, a, a), b, harakat))
     return results
 
 
@@ -784,6 +833,8 @@ def arguments(argv):
     p.add_argument("--ayah", type=select_ayah, metavar="S:A[-B]", help="الآية المقصودة أو نطاق متصل من سورة واحدة")
     p.add_argument("--words", type=select_range, metavar="N[-M]", help="كلمات آية محددة، يبدأ العد من 1")
     p.add_argument("--profile", metavar="FILE", help="ملف JSON اختياري بأوجه القراءة في حفص")
+    p.add_argument("--harakat", action="store_true",
+                   help="احكم على الحركات والتجويد أيضاً (الافتراضي: الكلمات فقط)")
     p.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto", help="جهاز تشغيل النموذج")
     p.add_argument("--model-dir", metavar="DIR", help="نسخة النموذج المحلية بملفاتها الأربع")
     p.add_argument("--json", metavar="REPORT", help="حفظ تقرير JSON أو تمرير - لطباعته")
@@ -850,13 +901,16 @@ def live_phrases(blocks):
             phrase, discard, quiet = [], True, 0
 
 
-def analyze_spans(wave, spans, quran, selected, model, offset_s=0.0):
+def analyze_spans(wave, spans, quran, selected, model, offset_s=0.0, harakat=False):
     breaths = [model.listen(wave, a, b, offset_s) for a, b in spans]
-    return manual_results(quran, selected, breaths) if selected else auto_results(quran, breaths)
+    if selected:
+        return manual_results(quran, selected, breaths, harakat)
+    return auto_results(quran, breaths, harakat)
 
 
-def report_for(results, selected, model_dir):
+def report_for(results, selected, model_dir, harakat=False):
     return {"riwaya": "حفص عن عاصم", "reference_mode": "selected" if selected else "automatic",
+            "judged": "full" if harakat else "words",
             "model": MODEL_ID, "model_revision": MODEL_REVISION if not model_dir else "local",
             "notice": NOTICE, "results": results}
 
@@ -900,11 +954,11 @@ def live_session(args):
                     if wave is None:
                         raise CheckError("طال المقطع المتصل. خذ نَفَساً أوضح بين العبارات.")
                     spans = split_audio(wave)
-                    results = analyze_spans(wave, spans, quran, selected, model, offset)
+                    results = analyze_spans(wave, spans, quran, selected, model, offset, args.harakat)
                 except CheckError as exc:
                     results = [{"status": "review", "reason": str(exc), "start_s": round(offset, 2),
                                 "end_s": round(offset + (len(wave)/SAMPLE_RATE if wave is not None else MAX_BREATH), 2)}]
-                report = report_for(results, selected, args.model_dir)
+                report = report_for(results, selected, args.model_dir, args.harakat)
                 if args.json == "-":
                     print(json.dumps(report, ensure_ascii=False, allow_nan=False), flush=True)
                 else:
@@ -922,10 +976,12 @@ def live_session(args):
     return 0
 
 
-def check_recitation(audio, *, ayah=None, words=None, profile=None, model_dir=None, device="auto"):
+def check_recitation(audio, *, ayah=None, words=None, profile=None, model_dir=None, device="auto",
+                     harakat=False):
     """Return a JSON-compatible report. Input is a path or mono float samples at 16 kHz.
 
     ayah accepts e.g. "1:2" or "1:2-4", words accepts e.g. "3-4" (one ayah).
+    harakat=False (default) judges whole words only; True adds vowels, tajweed and sifat.
     """
     import numpy as np
     info(NOTICE)
@@ -942,8 +998,8 @@ def check_recitation(audio, *, ayah=None, words=None, profile=None, model_dir=No
     quran = Quran(options(profile))
     selected = quran.words(*ayah, word_range=words) if ayah else None
     model = AcousticModel(model_dir, device)
-    results = analyze_spans(wave, spans, quran, selected, model)
-    return report_for(results, selected, model_dir)
+    results = analyze_spans(wave, spans, quran, selected, model, harakat=harakat)
+    return report_for(results, selected, model_dir, harakat)
 
 
 def main(argv=None):
@@ -952,7 +1008,7 @@ def main(argv=None):
         return live_session(args)
     audio = args.audio if args.audio else get_wave(args)
     report = check_recitation(audio, ayah=args.ayah, words=args.words, profile=args.profile,
-                              model_dir=args.model_dir, device=args.device)
+                              model_dir=args.model_dir, device=args.device, harakat=args.harakat)
     if args.json:
         write_report(args.json, report, [args.audio, args.profile, __file__])
     if args.json != "-":

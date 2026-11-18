@@ -1,8 +1,7 @@
 """Run from anywhere:  python3 quran_recitation/tests/logic_test.py
-Needs quran-transcript, numpy. No acoustic model or torch: a stand-in model hears a given phonetic string, so
-everything after the model runs for real. The real model is only exercised on a server with the full dependencies."""
-"""Exercise quran_checker.py's analysis without the 2.4 GB acoustic model: a stand-in model 'hears' a given phonetic
-string (as the real CTC heads would emit it), so everything after the model runs for real."""
+Needs quran-transcript, numpy. No acoustic model or torch: a stand-in model 'hears' a given phonetic string (as the
+real CTC heads would emit it), so everything after the model runs for real. The real model is only exercised on a
+server with the full dependencies."""
 import sys, json
 import os
 ROOT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -47,31 +46,57 @@ wave = np.zeros(qc.SAMPLE_RATE * 3, np.float32)
 spans = [(0, len(wave))]
 model = FakeModel()
 
-def run(s, a, heard, sifat=None, ayah=True):
+def run(s, a, heard, sifat=None, ayah=True, harakat=False):
     model.script.append((heard, sifat))
     sel = quran.words(s, a, a) if ayah else None
-    res = qc.analyze_spans(wave, spans, quran, sel, model)
-    return qc.report_for(res, sel, None)
+    res = qc.analyze_spans(wave, spans, quran, sel, model, harakat=harakat)
+    return qc.report_for(res, sel, None, harakat)
 
-out = {}
+failed = []
+def check(name, got, want):
+    ok = got == want
+    print(("ok  " if ok else "FAIL"), name, "->", json.dumps(got, ensure_ascii=False))
+    if not ok:
+        failed.append(name)
+
+def status(r):
+    return r["results"][0]["status"]
+
+def found(r):
+    return [(x["word"], x["label"]) for x in r["results"][0].get("findings", [])]
+
+# words only (the default): vowels, tanween, shadda, close letters are not judged
 words, ref = ref_of(112, 1)
-r = run(112, 1, ref.phonemes, ref.sifat); out["1_correct_112_1"] = (r["results"][0]["status"], len(r["results"][0].get("findings", [])))
+check("correct 112:1", (status(r := run(112, 1, ref.phonemes, ref.sifat)), found(r)), ("no_difference_detected", []))
 words, ref = ref_of(112, 3)
-bad = ref.phonemes.replace("يَلِد", "يَلُد", 1)
-r = run(112, 3, bad); f = r["results"][0].get("findings", [])
-out["2_vowel_error_112_3"] = (r["results"][0]["status"], [(x["word"], x["kind"], x["label"], x["expected"], x["heard"], x["status"]) for x in f])
-bad = ref.phonemes.replace("يَلِد", "يَلِت", 1)
-r = run(112, 3, bad); f = r["results"][0].get("findings", [])
-out["3_letter_error_112_3"] = (r["results"][0]["status"], [(x["word"], x["kind"], x["expected"], x["heard"]) for x in f])
+vowel = ref.phonemes.replace("يَلِد", "يَلُد", 1)
+check("vowel يَلِدْ→يَلُدْ: not judged", status(run(112, 3, vowel)), "no_difference_detected")
+r = run(112, 3, ref.phonemes.replace("يَلِد", "يَلِت", 1))
+check("letter د→ت: the word is wrong", (status(r), found(r)), ("possible_difference", [("يَلِدْ", "الكلمة")]))
+r = run(112, 3, ref.phonemes.replace("يَلِد", "تَلِد", 1))
+check("يلد→تلد: the word is wrong", (status(r), found(r)), ("possible_difference", [("يَلِدْ", "الكلمة")]))
+check("close letters د→ذ: not judged", status(run(112, 3, ref.phonemes.replace("يَلِد", "يَلِذ", 1))), "no_difference_detected")
+words, ref = ref_of(112, 2)
+check("close letters ص→س: not judged", status(run(112, 2, ref.phonemes.replace("صصَ", "سسَ", 1))), "no_difference_detected")
+check("shadda left out: not judged", status(run(112, 2, ref.phonemes.replace("صصَ", "صَ", 1))), "no_difference_detected")
+words, ref = ref_of(112, 4)
+check("tanween left out (كُفُوًا): not judged", status(run(112, 4, ref.phonemes.replace("كُفُوَن", "كُفُوَ", 1))), "no_difference_detected")
+words, ref = ref_of(1, 2)
+r = run(1, 2, ref.phonemes.replace("رَببِ", "", 1))
+bare = lambda w: "".join(c for c in w if "\u0621" <= c <= "\u064a")
+check("skipped رَبِّ: flagged", (status(r) != "no_difference_detected", [bare(w) for w, _ in found(r)][:1]), (True, ["رب"]))
+# harakat=True: the full report as before
+words, ref = ref_of(112, 3)
+r = run(112, 3, vowel, harakat=True)
+check("harakat on: vowel judged", (status(r), [(x["word"], x["kind"]) for x in r["results"][0]["findings"]]),
+      ("possible_difference", [("يَلِدْ", "tashkeel")]))
+# finding the ayah
 words, ref = ref_of(67, 1)
 r = run(67, 1, ref.phonemes, None, ayah=False)
-out["4_auto_identify_67_1"] = (r["results"][0].get("first_ayah"), r["results"][0]["status"])
+check("auto identify 67:1", (r["results"][0].get("first_ayah"), status(r)), ("67:1", "no_difference_detected"))
 words, ref = ref_of(55, 13)
 r = run(55, 13, ref.phonemes, None, ayah=False)
-out["5_auto_repeated_55_13"] = (r["results"][0]["status"], r["results"][0].get("candidate_count"))
-words, ref = ref_of(1, 2)
-skip = ref.phonemes.replace("رَببِ", "", 1)
-r = run(1, 2, skip); f = r["results"][0].get("findings", [])
-out["6_skipped_word_1_2"] = (r["results"][0]["status"], [(x["word"], x["operation"], x["status"]) for x in f])
-print(json.dumps({"keys": list(r.keys()), "notice": r.get("notice", "")[:40]}, ensure_ascii=False))
-for k, v in out.items(): print(k, "->", json.dumps(v, ensure_ascii=False))
+check("55:13 repeated: ambiguous", (status(r), r["results"][0].get("candidate_count")), ("ambiguous", 31))
+check("report says words only", r["judged"], "words")
+print("all passed" if not failed else f"{len(failed)} failed")
+sys.exit(1 if failed else 0)

@@ -469,6 +469,15 @@
       const e = stripLen(exp), g = stripLen(got);
       if (e === g) continue;
       if (opts.harakat === false && stripVowels(e) === stripVowels(g)) continue; // only the vowels differ: not judged
+      if (opts.words) { // words only: a note only when the word's letters changed
+        let lo = i1; while (lo > 0 && (lo === i1 || NOT_LETTER.has(R[lo]))) lo--; // with the letters on each side,
+        let hi = i2; while (hi < R.length - 1 && NOT_LETTER.has(R[hi])) hi++;     // so a doubled letter counts once
+        const L = R.slice(lo, i1), T = R.slice(i2, hi + 1), ke = letterKey(exp), kg = letterKey(got);
+        if (letterKey(L + exp + T) === letterKey(L + got + T) || (NASAL_ONLY.has(ke) && NASAL_ONLY.has(kg))) continue;
+        if (unsure(j1, j2, jaliThr)) continue;
+        if (!notes[w].some(n => n.rule === "wrong")) notes[w].push({ rule: "wrong", severity: "jali", pos: i1, msg: tag === "insert" && kg.length >= 2 ? "فيه زيادة عند هالكلمة" : "الكلمة ما طلعت صح" });
+        continue;
+      }
       if (unsure(j1, j2, jaliThr)) continue;
       if (tag === "replace" && e.length === 1 && g.length === 1 && HARAKAT.has(e) && HARAKAT.has(g)) {
         const letter = consonantBefore(R, i1);
@@ -487,7 +496,8 @@
     }
 
     // what the reciter chose not to be judged on: harakat (vowels, shadda, a madd dropped) and the fine points of tajweed
-    if (opts.harakat === false || opts.tajweed === false) {
+    if (opts.words) for (let k = 0; k < nW; k++) notes[k] = notes[k].filter(n => n.rule === "wrong");
+    else if (opts.harakat === false || opts.tajweed === false) {
       for (let k = 0; k < nW; k++) notes[k] = notes[k].filter(n =>
         (opts.tajweed !== false || n.severity !== "khafi") &&
         (opts.harakat !== false || !(n.rule === "vowel" || n.rule === "shadda" || (n.severity === "jali" && MADD_NAME[n.rule]))));
@@ -502,6 +512,12 @@
   const VOWELS = new Set(["َ", "ُ", "ِ", "۪", "ؙ", "ـ"]);
   function stripVowels(x) { let o = ""; for (const c of x) if (!VOWELS.has(c)) o += c; return o; }
   function consonantBefore(R, i) { for (let k = i - 1; k >= 0; k--) { const c = R[k]; if (!HARAKAT.has(c) && !LONG.has(c) && c !== "ڇ") return c; } return ""; }
+  // words only: a word's letters, without vowels, madd, shadda (a doubled letter), qalqalah or hamza, with letters that
+  // sound close (and that the model mixes up) as one: the reciter is judged on saying the right word, not on how
+  const CLOSE = { "ه": "ح", "ص": "س", "ث": "س", "ذ": "د", "ز": "د", "ض": "د", "ظ": "د", "ط": "ت", "ق": "ك", "غ": "خ", "ں": "ن", "۾": "م" };
+  const NOT_LETTER = new Set([...HARAKAT, ...LONG, "ڇ", "ۜ", "ؙ", "۪", "ـ", "ء", "ٲ"]);
+  const NASAL_ONLY = new Set(["", "ن", "م"]); // a tanween said or left out, a noon / meem in idgham, ikhfa or iqlab
+  function letterKey(x) { let o = "", prev = ""; for (const c0 of x) { if (c0 === "ڇ") continue; if (NOT_LETTER.has(c0)) { prev = ""; continue; } const c = CLOSE[c0] || c0; if (c !== prev) o += c; prev = c; } return o; } // a doubled letter (shadda) counts once
 
   /* ------------------------------------------------------------------ */
   /* 6. Finding where the reciter is: anywhere in the Quran               */
@@ -747,7 +763,7 @@
       ref.occ.forEach((k, o) => { const [a, b] = ref.spans[o]; if (P.first[k]) mark(a, a + 3); if (P.last[k]) mark(b - 3, b); });
       for (const x of ref.segStart) mark(x, x + 3);
       for (const x of ref.segEnd) mark(x - 3, x);
-      const { notes } = listen(ref, heard, probs, times, { tempo, endGrace: 3, skip: (i) => grace.has(i), harakat: opts.harakat !== false, tajweed: opts.tajweed !== false });
+      const { notes } = listen(ref, heard, probs, times, { tempo, endGrace: 3, skip: (i) => grace.has(i), harakat: opts.harakat !== false, tajweed: opts.tajweed !== false, words: !!opts.words });
 
       // apply, in recitation order (a repeated word: its later reading counts); with "stay", stop at the first clear
       // mistake that was not put right later in the same breath
@@ -792,5 +808,5 @@
     };
   }
 
-  global.TasmeeEngine = { loadModel, loadPhonetics, hear, logMel, opcodes, levDistance, locate, listen, buildPassage, compose, recited, findAyah, extraPrefix, skeleton, Session, Recorder, PHONEMES, get PH() { return PH; } };
+  global.TasmeeEngine = { letterKey, loadModel, loadPhonetics, hear, logMel, opcodes, levDistance, locate, listen, buildPassage, compose, recited, findAyah, extraPrefix, skeleton, Session, Recorder, PHONEMES, get PH() { return PH; } };
 })(typeof window !== "undefined" ? window : globalThis);

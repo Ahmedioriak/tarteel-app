@@ -55,12 +55,12 @@ class Analyzer:
         self.model = checker.AcousticModel(self.model_dir, os.getenv("QURAN_DEVICE", "auto"))
         self.quran = checker.Quran(checker.options(None))
 
-    def scan(self, path, ayah, words):
+    def scan(self, path, ayah, words, harakat=False):
         wave = decode_upload(path)
         spans = checker.split_audio(wave)
         selected = self.quran.words(*ayah, word_range=words) if ayah else None
-        results = checker.analyze_spans(wave, spans, self.quran, selected, self.model)
-        return checker.report_for(results, selected, self.model_dir)
+        results = checker.analyze_spans(wave, spans, self.quran, selected, self.model, harakat=harakat)
+        return checker.report_for(results, selected, self.model_dir, harakat)
 
 
 def create_app():
@@ -98,7 +98,8 @@ def create_app():
 
     @app.post("/api/recitation/analyze")
     async def analyze(request: Request, ayah: str | None = Query(None, max_length=24),
-                      words: str | None = Query(None, max_length=24)):
+                      words: str | None = Query(None, max_length=24),
+                      harakat: bool = Query(False)):
         secret = os.getenv("QURAN_API_TOKEN")
         if secret and not hmac.compare_digest(request.headers.get("Authorization", "").encode(),
                                                ("Bearer " + secret).encode()):
@@ -149,7 +150,7 @@ def create_app():
                 if app.state.analyzer is None:
                     app.state.analyzer = await run_in_threadpool(Analyzer)
                 try:
-                    report = await run_in_threadpool(app.state.analyzer.scan, path, where, interval)
+                    report = await run_in_threadpool(app.state.analyzer.scan, path, where, interval, harakat)
                 except checker.CheckError as exc:
                     raise HTTPException(422, str(exc)) from exc
             return JSONResponse(report, headers={"Cache-Control": "no-store"})
