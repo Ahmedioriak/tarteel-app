@@ -18,6 +18,13 @@ This repo is the source of truth for the "رفيق الحفظ" app. The live app
 
 The version shown at the bottom of the plan screen must match the latest commit's `APP_VERSION`.
 
+## Two places, one file
+
+`index.html` runs in two places and picks its behaviour at load:
+- **Inside Claude (artifact):** `window.claude` exists. Progress in `db`, recitation checking through Claude's `dictation`, listening by links to Quran.com (artifact pages can't load remote audio).
+- **Own site (GitHub Pages, https://ahmedioriak.github.io/tarteel-app/):** `STANDALONE` is true. Progress in `localStorage`, in-app audio player (EveryAyah per-ayah MP3s, Islamic Network CDN as fallback), recitation checking through the browser's Web Speech API (`webSpeechAdapter`, `ar-SA`).
+Test both: a change to audio or speech must keep the artifact path working, and the reverse.
+
 ## Things to keep
 
 - User progress lives in the artifact's `db` at `data/users/<id>/hifz`. Never change that path or the state shape without a migration, or people lose their progress.

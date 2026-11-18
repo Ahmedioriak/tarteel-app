@@ -149,6 +149,11 @@ table.cmp tr.on td{color:var(--green);font-weight:700}
 .field{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .field label{font-size:12.5px;color:var(--muted);display:block;margin-top:10px}
 .field select{margin-top:4px}
+.ayah.playing{border-color:var(--gold);box-shadow:0 0 0 2px color-mix(in srgb,var(--gold) 35%,transparent)}
+.player{display:flex;gap:6px;align-items:center}
+.player .play{flex:none;min-width:112px;border:0;border-radius:12px;padding:10px 14px;font-weight:700;background:var(--gold);color:#fff}
+.player select{margin:0;padding:8px 10px;flex:1;min-width:0}
+.ayah .playone{border:0;background:none;padding:0;font-size:12.5px;color:var(--green);font-weight:600;white-space:nowrap}
 .hubbtns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}
 .hubbtns .btn,.hubbtns a.btn{text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:6px}
 </style>
@@ -166,7 +171,7 @@ table.cmp tr.on td{color:var(--green);font-weight:700}
 
 <script>
 "use strict";
-const APP_VERSION="1.1.1"; // keep in sync with CHANGELOG.md and the GitHub commit
+const APP_VERSION="1.2.0"; // keep in sync with CHANGELOG.md and the GitHub commit
 /* ---------- helpers ---------- */
 const $ = s => document.querySelector(s);
 const AR = n => String(n).replace(/\d/g, d => "٠١٢٣٤٥٦٧٨٩"[d]);
@@ -224,9 +229,12 @@ const surahName = s => SUR[s-1][0];
 /* ---------- state ---------- */
 const KEY="hifz-companion-v1";
 let S=null, MEM=new Uint8Array(0);
-let store={mode:"local", ref:null, note:""};
+let store={mode:"local", ref:null, note:"", warn:""};
+let IN_FRAME=true; try{ IN_FRAME = window.self!==window.top; }catch(e){ IN_FRAME=true; }
+let STANDALONE=false; // true when the page runs on its own site (e.g. GitHub Pages), not inside Claude
 function defaults(){ return {v:1, amount:.5, days:[0,1,2,3,4,6], order:"back", start:114, rep:10, qfs:27,
-  mem:"", hist:[], log:{}, weak:{}, farPos:0, started:keyOf(new Date()), range:{s:1,a:1,b:7}}; }
+  mem:"", hist:[], log:{}, weak:{}, farPos:0, started:keyOf(new Date()), range:{s:1,a:1,b:7},
+  reciter:"husary", arep:1, rrep:1, speed:1}; }
 function packBits(u){ let s=""; for(let i=0;i<u.length;i+=8){ let b=0; for(let k=0;k<8;k++) if(u[i+k]) b|=1<<k; s+=String.fromCharCode(b);} return btoa(s); }
 function unpackBits(str){ const u=new Uint8Array(N); if(!str) return u; try{ const s=atob(str); for(let i=0;i<N;i++) u[i]=(s.charCodeAt(i>>3)>>(i&7))&1; }catch(e){} return u; }
 
@@ -234,7 +242,7 @@ function localLoad(){ try{ const r=localStorage.getItem(KEY); return r?JSON.pars
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 function withTimeout(p,ms){ return Promise.race([p, new Promise((_,rej)=>setTimeout(()=>rej({code:"timeout"}),ms))]); }
 async function initStorage(){
-  for(let k=0;k<25 && !(window.claude && window.claude.use);k++) await sleep(100);
+  if(IN_FRAME) for(let k=0;k<25 && !(window.claude && window.claude.use);k++) await sleep(100);
   if(window.claude && window.claude.use){
     try{
       const [db,user]=await Promise.all([window.claude.use("db"), window.claude.use("user")]);
@@ -243,17 +251,18 @@ async function initStorage(){
         if(id){
           const ref=db.collection("data/users/"+id).doc("hifz");
           const snap=await withTimeout(ref.get(),10000);
-          store={mode:"db", ref, note:""};
+          store={mode:"db", ref, note:"", warn:""};
           if(snap.exists){ store.from="db"; return snap.data(); }
           store.from="local"; return localLoad();
         }
       }
     }catch(e){
-      store={mode:"local", ref:null, note:"ما قدرت أوصل لحسابك الحين، فتقدمك بينحفظ في هالجهاز مؤقتاً."};
+      store={mode:"local", ref:null, note:"تقدمك محفوظ في هالجهاز مؤقتاً.", warn:"ما قدرت أوصل لحسابك الحين، فتقدمك بينحفظ في هالجهاز مؤقتاً."};
       return localLoad();
     }
   }
-  store={mode:"local", ref:null, note:"تقدمك محفوظ في هالمتصفح بس. افتح التطبيق وأنت مسجل دخول في Claude عشان ينحفظ في حسابك."};
+  STANDALONE = !(window.claude && window.claude.use);
+  store={mode:"local", ref:null, warn:"", note: STANDALONE ? "تقدمك محفوظ في هالمتصفح على هالجهاز. إذا مسحت بيانات المتصفح ينمسح التقدم." : "تقدمك محفوظ في هالمتصفح بس. افتح التطبيق وأنت مسجل دخول في Claude عشان ينحفظ في حسابك."};
   return localLoad();
 }
 let saving=false, dirty=false, saveT=null;
@@ -272,7 +281,7 @@ async function flush(retry){
   }catch(e){
     const c=e&&e.code;
     if((c==="unavailable"||c==="resource_exhausted") && !retry){ saving=false; setTimeout(()=>flush(true),1200+Math.random()*1500); return; }
-    if(c!=="unavailable"){ store.mode="local"; store.note="ما قدرت أحفظ في حسابك، فتقدمك محفوظ في هالجهاز."; toast("انحفظ التقدم في هالجهاز"); }
+    if(c!=="unavailable"){ store.mode="local"; store.note="تقدمك محفوظ في هالجهاز."; store.warn="ما قدرت أحفظ في حسابك، فتقدمك محفوظ في هالجهاز."; toast("انحفظ التقدم في هالجهاز"); }
   }
   saving=false;
   if(dirty){ dirty=false; flush(); }
@@ -372,7 +381,7 @@ function pagesWord(n){ return n===1?"صفحة وحدة":n===2?"صفحتين":n<=
 /* ---------- views ---------- */
 let VIEW="today", READ=null, REPS={}, MODE="read", LINK=0;
 const app=$("#app");
-function go(v, ctx){ stopDict(); if(ctx!==undefined) READ=ctx; VIEW=v; try{ if(location.hash!=="#"+v) history.replaceState(null,"","#"+v); }catch(e){} render(); window.scrollTo(0,0); }
+function go(v, ctx){ stopDict(); stopAudio(); if(ctx!==undefined) READ=ctx; VIEW=v; try{ if(location.hash!=="#"+v) history.replaceState(null,"","#"+v); }catch(e){} render(); window.scrollTo(0,0); }
 document.querySelectorAll("#tabs button").forEach(b=>b.addEventListener("click",()=>{ if(!S){ go("plan"); return; } if(b.dataset.go==="read") READ=null; go(b.dataset.go); }));
 window.addEventListener("hashchange",()=>{ const h=location.hash.slice(1); if(["today","read","progress","plan"].includes(h)&&h!==VIEW){ VIEW=S?h:"plan"; render(); } });
 
@@ -398,7 +407,7 @@ function renderToday(){
   const hour=today.getHours(); const greet= hour<12?"صباح الخير":"مساء الخير";
   let h=header(st?`<span class="chip">🔥 ${st} ${st===1?"يوم":st===2?"يومين":"أيام"}</span>`:"");
   h+=`<p style="margin:0 2px 12px;font-size:15px">${greet} 👋 ${active?"هذي مهامك لليوم:":"اليوم يوم مراجعة."}</p>`;
-  if(store.note) h+=`<div class="banner" style="font-size:13px">${store.note}</div>`;
+  if(store.warn) h+=`<div class="banner" style="font-size:13px">${store.warn}</div>`;
 
   // new
   h+=`<div class="card"><h2>الحفظ الجديد <span class="tag">${AMOUNTS.find(a=>a.v===S.amount).name}</span></h2>`;
@@ -468,6 +477,7 @@ function renderRead(){
     </div>
     ${MODE==="read"?`<div class="row" style="gap:8px"><span class="muted" style="font-size:13px">عدد التكرار:</span><div class="seg">${[5,10,20].map(n=>`<button data-rep="${n}" class="${S.rep===n?"on":""}">${n}×</button>`).join("")}</div></div>`:""}
     ${MODE==="voice"?voicePanel():""}
+    ${STANDALONE&&MODE!=="voice"?playerBar():""}
   </div>`;
   if(c.kind==="page"){
     const st=pageState(c.page);
@@ -477,7 +487,8 @@ function renderRead(){
     h+=`<div class="steps"><span><b>١</b> اسمع المقطع ٣ مرات</span><span><b>٢</b> اضغط على الآية كل ما تكررها</span><span><b>٣</b> اربط الآيات ببعض</span><span><b>٤</b> اختبر نفسك</span><span><b>٥</b> سمّعها لأحد</span></div>`;
   }
   const groups=ayahGroups(idx);
-  h+=`<div class="listen" style="margin:10px 0 4px">🎧 اسمع على Quran.com: ${groups.slice(0,6).map(g=>`<a href="${qcomURL(g.s,g.a,g.b)}" target="_blank" rel="noopener">${surahName(g.s)} ${g.a===g.b?AR(g.a):AR(g.a)+"–"+AR(g.b)}</a>`).join("")}${groups.length>6?`<span class="muted">…</span>`:""}</div>`;
+  if(!STANDALONE) h+=`<div class="listen" style="margin:10px 0 4px">🎧 اسمع على Quran.com: ${groups.slice(0,6).map(g=>`<a href="${qcomURL(g.s,g.a,g.b)}" target="_blank" rel="noopener">${surahName(g.s)} ${g.a===g.b?AR(g.a):AR(g.a)+"–"+AR(g.b)}</a>`).join("")}${groups.length>6?`<span class="muted">…</span>`:""}</div>`;
+  else if(MODE==="voice") h+=`<p class="muted" style="font-size:13px;margin:8px 0 0">الصوت يتوقف وقت التسميع عشان المايك يسمعك أنت بس.</p>`;
   if(MODE==="read") h+=`<p class="muted" style="font-size:13px;margin:4px 0 8px">اضغط على الآية كل مرة تقرأها بدون ما تشوف، لين توصل ${S.rep} مرات.</p>`;
   else if(MODE==="test") h+=`<p class="muted" style="font-size:13px;margin:4px 0 8px">الكلمات مخفية. حاول تقرأ الآية من حفظك، واضغط عليها تكشف كلمة كلمة.</p>`;
   else h+=`<p class="muted" style="font-size:13px;margin:4px 0 8px">اضغط "ابدأ التسميع" واقرأ من حفظك. الكلمات تطلع كل ما قلتها صح، واللي تنساها تطلع بالأحمر.</p>`;
@@ -519,7 +530,7 @@ function ayahHTML(i){
     return `<div class="ayah v" data-vi="${i}"><div class="t">${txt} <span class="num">﴿${AR(a)}﴾</span></div></div>`; }
   else txt=t;
   let meta;
-  if(MODE==="read") meta=`<span>تكرار ${r} / ${S.rep}</span><span class="bar"><i style="width:${Math.min(100,r/S.rep*100)}%"></i></span><a class="lis" href="${qcomURL(s,a,a)}" target="_blank" rel="noopener">🎧 اسمعها</a>`;
+  if(MODE==="read") meta=`<span>تكرار ${r} / ${S.rep}</span><span class="bar"><i style="width:${Math.min(100,r/S.rep*100)}%"></i></span>${STANDALONE?`<button class="playone" data-play="${i}">▶ اسمعها</button>`:`<a class="lis" href="${qcomURL(s,a,a)}" target="_blank" rel="noopener">🎧 اسمعها</a>`}`;
   else meta=`<button class="btn small ghost" data-reveal="${i}">اكشف الآية</button><button class="btn small ghost" style="color:var(--danger)" data-wrong="${i}">غلطت هنا</button>`;
   return `<div class="ayah${done?" done":""}" data-i="${i}"><div class="t">${txt} <span class="num">﴿${AR(a)}﴾</span></div><div class="meta">${meta}</div></div>`;
 }
@@ -536,12 +547,12 @@ function renderHub(){
     <div><label>إلى آية</label><select id="rB">${[...Array(n)].map((_,k)=>k+1).filter(x=>x>=r.a).map(x=>`<option value="${x}" ${r.b===x?"selected":""}>${x}</option>`).join("")}</select></div></div>
     <p class="sub" style="margin-top:10px">المختار: سورة ${surahName(r.s)}، ${r.a===r.b?"آية "+AR(r.a):"من آية "+AR(r.a)+" إلى "+AR(r.b)} (${ayatWord(r.b-r.a+1)})</p>
     <div class="hubbtns">
-      <a class="btn" href="${qcomURL(r.s,r.a,r.b)}" target="_blank" rel="noopener">🎧 اسمعها</a>
+      ${STANDALONE?`<button class="btn" data-act="range-listen">🎧 اسمعها</button>`:`<a class="btn" href="${qcomURL(r.s,r.a,r.b)}" target="_blank" rel="noopener">🎧 اسمعها</a>`}
       <button class="btn" data-act="range-read">🔁 اقرأ وكرر</button>
       <button class="btn" data-act="range-test">🙈 اختبر نفسك</button>
       <button class="btn primary" data-act="range-voice">🎙️ سمّع بصوتك</button>
     </div>
-    <p class="sub" style="margin-top:10px;font-size:12.5px">"اسمعها" يفتح المقطع على Quran.com، وهناك تقدر تشغّله وتكرره.${DICT?"":" التسميع بالصوت يشتغل في Chrome أو تطبيق Claude على الكمبيوتر."}</p>
+    <p class="sub" style="margin-top:10px;font-size:12.5px">${STANDALONE?"الصوت يشتغل هنا مباشرة، وتقدر تكرر الآية والمقطع وتغير القارئ والسرعة.":"\"اسمعها\" يفتح المقطع على Quran.com، وهناك تقدر تشغّله وتكرره."}${DICT?"":(STANDALONE?" التسميع بالصوت يحتاج متصفح Chrome أو Safari.":" التسميع بالصوت يشتغل في Chrome أو تطبيق Claude على الكمبيوتر.")}</p>
   </div>`;
   app.innerHTML=h;
 }
@@ -614,9 +625,10 @@ function voiceUpdate(){
   }
 }
 function setMic(){ const b=$("#micBtn"), t=$("#micTxt"); if(b) b.classList.toggle("on",VOICE.state!=="idle"); if(t) t.textContent=micLabel(); }
-function voiceUnavailable(){ openSheet(`<h3>التسميع بالصوت مو متوفر هنا</h3><p class="sub">يشتغل في متصفح Chrome أو Edge على الكمبيوتر، أو في تطبيق Claude على الكمبيوتر. داخل تطبيق Claude في الجوال وفي Safari ما يشتغل.</p><p class="sub" style="margin-top:8px">في الجوال استخدم "اختبر نفسك": الكلمات تنخفي وتكشفها وحدة وحدة.</p><button class="btn primary block" style="margin-top:14px" data-act="close-sheet">تمام</button>`); }
+function voiceUnavailable(){ openSheet(`<h3>التسميع بالصوت مو متوفر هنا</h3><p class="sub">${STANDALONE?"متصفحك ما يدعم التعرف على الصوت. افتح الموقع في Chrome (كمبيوتر أو أندرويد) أو Safari (آيفون).":"يشتغل في متصفح Chrome أو Edge على الكمبيوتر، أو في تطبيق Claude على الكمبيوتر. داخل تطبيق Claude في الجوال وفي Safari ما يشتغل."}</p><p class="sub" style="margin-top:8px">في الجوال استخدم "اختبر نفسك": الكلمات تنخفي وتكشفها وحدة وحدة.</p><button class="btn primary block" style="margin-top:14px" data-act="close-sheet">تمام</button>`); }
 function micClick(){
   if(!DICT){ voiceUnavailable(); return; }
+  stopAudio();
   if(VOICE.state!=="idle"){ DICT.stop().catch(()=>{}); return; }
   VOICE.ended=false;
   DICT.start({language:"ar"}).catch(err=>{
@@ -637,7 +649,97 @@ function setupDict(d){
     if(state==="idle"){ VOICE.partial=""; const pe=$("#partial"); if(pe) pe.textContent=""; voiceUpdate();
       if(reason==="unavailable") toast("التسميع بالصوت مو متوفر هنا");
       else if(reason==="time_limit") toast("وقف المايك بعد ساعة، اضغط تكمل");
-      else if(reason==="upstream_error") toast("صار خطأ في المايك، جرب مرة ثانية"); } });
+      else if(reason==="upstream_error") toast("صار خطأ في المايك، جرب مرة ثانية");
+      else if(reason==="not_granted") toast("لازم تسمح للموقع يستخدم المايك"); } });
+}
+
+/* ----- audio player (own site only: Claude artifacts can't load remote audio) ----- */
+const pad3=n=>String(n).padStart(3,"0");
+const RECITERS=[
+  {id:"husary",   name:"محمود خليل الحصري", ea:"Husary_64kbps"},
+  {id:"alafasy",  name:"مشاري العفاسي", ea:"Alafasy_128kbps", alt:n=>"https://cdn.islamic.network/quran/audio/128/ar.alafasy/"+n+".mp3"},
+  {id:"minshawy", name:"محمد صديق المنشاوي", ea:"Minshawy_Murattal_128kbps", alt:n=>"https://cdn.islamic.network/quran/audio/128/ar.minshawi/"+n+".mp3"},
+  {id:"basit",    name:"عبد الباسط عبد الصمد", ea:"Abdul_Basit_Murattal_64kbps"},
+  {id:"shaatree", name:"أبو بكر الشاطري", ea:"Abu_Bakr_Ash-Shaatree_128kbps"}
+];
+const reciter=()=>RECITERS.find(r=>r.id===S.reciter)||RECITERS[0];
+function audioURLs(i){ const [s,a]=A[i]; const r=reciter(); const u=["https://everyayah.com/data/"+r.ea+"/"+pad3(s)+pad3(a)+".mp3"]; if(r.alt) u.push(r.alt(i+1)); return u; }
+const PLAYER={audio:null, list:[], pos:0, rep:0, round:0, playing:false, single:null, src:0};
+function playIdx(idx, opt){
+  stopAudio(); if(!idx.length) return;
+  const list=[]; for(const i of idx){ const [s,a]=A[i]; if(a===1 && s!==1 && s!==9 && opt.single==null) list.push({i:0, bas:true, of:i}); list.push({i}); }
+  Object.assign(PLAYER,{list, pos:0, rep:0, round:0, playing:true, single:opt.single??null});
+  if(!PLAYER.audio){ PLAYER.audio=new Audio(); PLAYER.audio.preload="auto";
+    PLAYER.audio.addEventListener("ended", ()=>{ if(PLAYER.playing) advance(); });
+    PLAYER.audio.addEventListener("error", ()=>{ if(!PLAYER.playing) return; const it=PLAYER.list[PLAYER.pos]; const urls=audioURLs(it.i);
+      if(PLAYER.src+1<urls.length){ PLAYER.src++; PLAYER.audio.src=urls[PLAYER.src]; PLAYER.audio.play().catch(()=>{}); }
+      else { stopAudio(); toast("ما قدرت أشغّل الصوت. تأكد من الإنترنت أو جرّب قارئ ثاني"); } });
+  }
+  playCurrent();
+}
+function playCurrent(){
+  const it=PLAYER.list[PLAYER.pos]; PLAYER.src=0;
+  const a=PLAYER.audio; a.src=audioURLs(it.i)[0]; a.playbackRate=S.speed||1;
+  a.play().catch(err=>{ if(err&&err.name==="NotAllowedError"){ stopAudio(); toast("اضغط زر التشغيل مرة ثانية"); } });
+  markPlaying(it.bas?it.of:it.i); setPlayBtn();
+}
+function advance(){
+  const it=PLAYER.list[PLAYER.pos];
+  if(!it.bas){ PLAYER.rep++; if(PLAYER.rep < (S.arep||1)){ playCurrent(); return; } }
+  PLAYER.rep=0; PLAYER.pos++;
+  if(PLAYER.pos>=PLAYER.list.length){
+    PLAYER.round++; const rr=PLAYER.single!==null?1:(S.rrep||1);
+    if(rr===0 || PLAYER.round<rr){ PLAYER.pos=0; } else { stopAudio(); return; }
+  }
+  playCurrent();
+}
+function stopAudio(){ PLAYER.playing=false; PLAYER.single=null; if(PLAYER.audio){ try{ PLAYER.audio.pause(); }catch(e){} } markPlaying(-1); setPlayBtn(); }
+function markPlaying(i){ document.querySelectorAll(".ayah.playing").forEach(el=>el.classList.remove("playing")); if(i<0) return;
+  const el=document.querySelector('.ayah[data-i="'+i+'"]'); if(el){ el.classList.add("playing"); const r=el.getBoundingClientRect(); const tb=document.querySelector(".toolbar"); const top=tb?tb.getBoundingClientRect().bottom:0; if(r.top<top||r.bottom>innerHeight-130) el.scrollIntoView({block:"center",behavior:"smooth"}); } }
+function setPlayBtn(){ const b=$("#playBtn"); if(b) b.textContent=PLAYER.playing?"⏸ إيقاف":"▶ تشغيل"; document.querySelectorAll(".playone").forEach(x=>x.textContent=(PLAYER.playing&&PLAYER.single===+x.dataset.play)?"⏸ إيقاف":"▶ اسمعها"); }
+function playerBar(){
+  const rr=S.rrep===0?"∞":S.rrep;
+  return `<div class="player"><button class="play" id="playBtn" data-act="play">${PLAYER.playing?"⏸ إيقاف":"▶ تشغيل"}</button>
+    <select id="recSel" aria-label="القارئ">${RECITERS.map(r=>`<option value="${r.id}" ${S.reciter===r.id?"selected":""}>${r.name}</option>`).join("")}</select>
+    <button class="btn small ghost" data-act="audio-settings" title="التكرار والسرعة">🔁 ${S.arep}× · ${rr}</button></div>`;
+}
+function audioSheet(){
+  const opt=(k,vals,lab)=>`<div class="seg" style="margin-top:6px">${vals.map(v=>`<button data-${k}="${v}" class="${(S[k==="arep"?"arep":k==="rrep"?"rrep":"speed"])===v?"on":""}">${lab(v)}</button>`).join("")}</div>`;
+  openSheet(`<h3>إعدادات الاستماع</h3>
+    <p class="sub" style="margin-top:10px">كرر كل آية</p>${opt("arep",[1,3,5,10],v=>v+"×")}
+    <p class="sub" style="margin-top:12px">كرر المقطع كامل</p>${opt("rrep",[1,2,3,0],v=>v===0?"بدون توقف":v+"×")}
+    <p class="sub" style="margin-top:12px">السرعة</p>${opt("speed",[0.75,1,1.25],v=>v===1?"عادي":v+"×")}
+    <p class="sub" style="margin-top:12px;font-size:12px">الصوت من EveryAyah وIslamic Network.</p>
+    <button class="btn primary block" style="margin-top:14px" data-act="close-sheet">تم</button>`);
+  const rb=document.querySelector('[data-act="audio-settings"]'); if(rb) rb.textContent="🔁 "+S.arep+"× · "+(S.rrep===0?"∞":S.rrep);
+}
+
+/* ----- browser speech recognition (own site only), shaped like Claude's dictation ----- */
+function webSpeechAdapter(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition; if(!SR) return null;
+  const android=/Android/i.test(navigator.userAgent);
+  let rec=null, want=false, state="idle", reason=null; const fH=[],pH=[],sH=[];
+  const emit=(st,r)=>{ state=st; sH.forEach(h=>h(r?{state:st,reason:r}:{state:st})); };
+  function make(){
+    rec=new SR(); rec.lang="ar-SA"; rec.interimResults=true; rec.maxAlternatives=1; rec.continuous=!android;
+    rec.onstart=()=>{ if(state!=="listening") emit("listening"); };
+    rec.onresult=e=>{ let interim=""; for(let k=e.resultIndex;k<e.results.length;k++){ const r=e.results[k];
+        if(r.isFinal){ const t=r[0].transcript.trim(); if(t) fH.forEach(h=>h({text:" "+t})); } else interim+=r[0].transcript; }
+      pH.forEach(h=>h({text:interim})); };
+    rec.onerror=e=>{ const c=e.error;
+      if(c==="not-allowed"||c==="service-not-allowed"){ want=false; reason="not_granted"; }
+      else if(c==="network"){ want=false; reason="upstream_error"; }
+      else if(c==="language-not-supported"){ want=false; reason="unavailable"; } };
+    rec.onend=()=>{ if(want){ try{ rec.start(); return; }catch(err){} } emit("idle", reason||"stopped"); reason=null; };
+  }
+  return {
+    start(){ if(state!=="idle") return Promise.resolve(); want=true; reason=null; make(); emit("starting");
+      try{ rec.start(); }catch(err){ want=false; emit("idle","upstream_error"); return Promise.reject({code:"upstream_error"}); }
+      return Promise.resolve(); },
+    stop(){ want=false; if(rec && state!=="idle"){ emit("finishing"); try{ rec.stop(); }catch(e){ emit("idle","stopped"); } } return Promise.resolve(); },
+    active(){ return state!=="idle"; },
+    onFinal(h){ fH.push(h); return ()=>{}; }, onPartial(h){ pH.push(h); return ()=>{}; }, onState(h){ sH.push(h); return ()=>{}; }
+  };
 }
 
 /* ----- progress ----- */
@@ -742,7 +844,11 @@ document.addEventListener("click", e=>{
   if(d.amount!==undefined){ const P=S||DRAFT; P.amount=+d.amount; if(S){READ=null;save();} render(); return; }
   if(d.day!==undefined){ const P=S||DRAFT; const v=+d.day; P.days=P.days.includes(v)?P.days.filter(x=>x!==v):[...P.days,v].sort(); if(S) save(); render(); return; }
   if(d.order){ const P=S||DRAFT; if(P.order!==d.order){ P.order=d.order; P.start=d.order==="back"?114:1; } if(S){READ=null;save();} render(); return; }
-  if(d.mode){ if(d.mode==="voice" && !DICT){ voiceUnavailable(); return; } stopDict(); MODE=d.mode; render(); return; }
+  if(d.mode){ if(d.mode==="voice" && !DICT){ voiceUnavailable(); return; } stopDict(); stopAudio(); MODE=d.mode; render(); return; }
+  if(d.play!==undefined){ const i=+d.play; if(PLAYER.playing && PLAYER.single===i){ stopAudio(); } else playIdx([i],{single:i}); return; }
+  if(d.arep){ S.arep=+d.arep; save(); audioSheet(); return; }
+  if(d.rrep){ S.rrep=+d.rrep; save(); audioSheet(); return; }
+  if(d.speed){ S.speed=+d.speed; if(PLAYER.audio) PLAYER.audio.playbackRate=S.speed; save(); audioSheet(); return; }
   if(d.rep){ S.rep=+d.rep; save(); render(); return; }
   if(d.page){ go("read",{kind:"page",page:+d.page}); return; }
   if(d.mtab){ markSheet(d.mtab); return; }
@@ -759,6 +865,9 @@ document.addEventListener("click", e=>{
   if(e.target.closest("a")) return;
   const act=d.act; if(!act) return;
   if(act==="mic"){ micClick(); return; }
+  if(act==="play"){ if(PLAYER.playing) stopAudio(); else playIdx(readContext().idx,{}); return; }
+  if(act==="audio-settings"){ audioSheet(); return; }
+  if(act==="range-listen"){ const r=S.range; MODE="read"; REPS={}; go("read",{kind:"range",s:r.s,a:r.a,b:r.b}); playIdx(readContext().idx,{}); return; }
   if(act==="voice-hint"){ VOICE.hints.add(VOICE.p); voiceUpdate(); return; }
   if(act==="voice-reset"){ stopDict(); VOICE.finals=""; VOICE.partial=""; VOICE.hints=new Set(); VOICE.ended=false; render(); return; }
   if(act==="voice-show"){ VOICE.showText=!VOICE.showText; const el=$("#ayahs"); if(el) el.classList.toggle("showtext",VOICE.showText); t.textContent=VOICE.showText?"اخفِ النص":"اعرض النص"; return; }
@@ -781,6 +890,7 @@ document.addEventListener("click", e=>{
   if(act==="reset-yes"){ S=null; MEM=new Uint8Array(N); DRAFT=null; READ=null; REPS={}; save(); closeSheet(); go("plan"); return; }
 });
 document.addEventListener("change", e=>{
+  if(e.target.id==="recSel" && S){ S.reciter=e.target.value; save(); if(PLAYER.playing){ const l=PLAYER.list, k=PLAYER.pos; stopAudio(); playIdx(l.filter(x=>!x.bas).map(x=>x.i),{}); } return; }
   const id=e.target.id; if(!["rS","rA","rB"].includes(id)||!S) return;
   const r=S.range; const v=+e.target.value;
   if(id==="rS"){ r.s=v; r.a=1; r.b=SUR[v-1][1]; }
@@ -797,6 +907,7 @@ function refreshAyah(i){ const el=document.querySelector(`.ayah[data-i="${i}"]`)
   }catch(e){ app.innerHTML=`<div class="loading">ما قدرت أحمّل المصحف. حدّث الصفحة وجرّب مرة ثانية.</div>`; return; }
   const loaded=await initStorage();
   if(window.claude && window.claude.use){ window.claude.use("dictation").then(d=>{ if(d){ setupDict(d); if(VIEW==="read"&&!READ) render(); } }).catch(()=>{}); }
+  else if(STANDALONE){ const w=webSpeechAdapter(); if(w) setupDict(w); }
   if(loaded && loaded.v){ S=Object.assign(defaults(),JSON.parse(JSON.stringify(loaded))); MEM=unpackBits(S.mem); }
   else { S=null; MEM=new Uint8Array(N); }
   const h=location.hash.slice(1);
