@@ -166,6 +166,9 @@ table.cmp tr.on td{color:var(--green);font-weight:700}
 .level{height:4px;border-radius:4px;background:var(--line);overflow:hidden;margin-top:8px}
 .level i{display:block;height:100%;width:0;background:var(--green2);transition:width .08s}
 .acc-status{font-size:13.5px;margin-top:8px;min-height:20px}
+.else-ayah{margin-top:8px;padding:8px 10px;border-radius:12px;background:var(--soft,rgba(0,0,0,.04));font-family:"Amiri Quran",serif;font-size:20px;line-height:1.9}
+.else-ayah .num{color:var(--gold);font-size:16px}
+#accElse,#voiceElse{max-height:38vh;overflow:auto}
 .acc-status.bad{color:var(--danger);font-weight:600}
 .chiprow{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .notes-list{margin:8px 0 0;padding:0;list-style:none}
@@ -198,7 +201,7 @@ table.cmp tr.on td{color:var(--green);font-weight:700}
 
 <script>
 "use strict";
-const APP_VERSION="1.5.0"; // keep in sync with CHANGELOG.md and the GitHub commit
+const APP_VERSION="1.6.0"; // keep in sync with CHANGELOG.md and the GitHub commit
 /* ---------- helpers ---------- */
 const $ = s => document.querySelector(s);
 const AR = n => String(n).replace(/\d/g, d => "٠١٢٣٤٥٦٧٨٩"[d]);
@@ -261,7 +264,7 @@ let IN_FRAME=true; try{ IN_FRAME = window.self!==window.top; }catch(e){ IN_FRAME
 let STANDALONE=false; // true when the page runs on its own site (e.g. GitHub Pages), not inside Claude
 function defaults(){ return {v:1, amount:.5, days:[0,1,2,3,4,6], order:"back", start:114, rep:10, qfs:27,
   mem:"", hist:[], log:{}, weak:{}, farPos:0, started:keyOf(new Date()), range:{s:1,a:1,b:7},
-  reciter:"husary", arep:1, rrep:1, speed:1, theme:"green", stay:true, engine:"acc", harakat:false, tajweed:false}; }
+  reciter:"husary", arep:1, rrep:1, speed:1, theme:"green", stay:true, engine:"acc", harakat:false, tajweed:false, check:"show"}; }
 function packBits(u){ let s=""; for(let i=0;i<u.length;i+=8){ let b=0; for(let k=0;k<8;k++) if(u[i+k]) b|=1<<k; s+=String.fromCharCode(b);} return btoa(s); }
 function unpackBits(str){ const u=new Uint8Array(N); if(!str) return u; try{ const s=atob(str); for(let i=0;i<N;i++) u[i]=(s.charCodeAt(i>>3)>>(i&7))&1; }catch(e){} return u; }
 
@@ -527,7 +530,7 @@ function renderRead(){
   if(MODE==="read") h+=`<p class="muted" style="font-size:13px;margin:4px 0 8px">اضغط على الآية كل مرة تقرأها بدون ما تشوف، لين توصل ${S.rep} مرات.</p>`;
   else if(MODE==="test") h+=`<p class="muted" style="font-size:13px;margin:4px 0 8px">الكلمات مخفية. حاول تقرأ الآية من حفظك، واضغط عليها تكشف كلمة كلمة.</p>`;
   else if(c.kind==="free") h+=`<div class="card" style="margin-top:10px"><h2>تسميع حر</h2><p class="sub" style="margin-top:4px">اضغط «ابدأ التسميع» واقرأ من أي آية تبيها. من أول كلمات أعرف وين أنت، وأطلع لك الآيات وأكمل معك لين آخر السورة. وإذا بديت بالبسملة، أعرف إنك تبدأ أول سورة.</p>${useAcc()?"":`<p class="sub" style="margin-top:6px">ابدأ بجملة كاملة (٥ كلمات أو أكثر) عشان أعرفها بسرعة.</p>`}</div>`;
-  else h+=`<p class="muted" style="font-size:13px;margin:4px 0 8px">${useAcc()?"اضغط «ابدأ التسميع» واقرأ من حفظك. أحاسبك على الكلمات بس: إذا قلت كلمة غلط أو نسيتها أو زدت، تطلع لك بالأحمر. الحركات والتجويد ما أحاسبك عليها.":"اضغط \"ابدأ التسميع\" واقرأ من حفظك. الكلمات تطلع كل ما قلتها صح، واللي تنساها تطلع بالأحمر."}</p>`;
+  else h+=`<p class="muted" style="font-size:13px;margin:4px 0 8px">${SHOW()?"اضغط «ابدأ التسميع» واقرأ من حفظك. أطلع لك الآية اللي تقراها، بدون تصحيح أخطاء.":useAcc()?"اضغط «ابدأ التسميع» واقرأ من حفظك. أحاسبك على الكلمات بس: إذا قلت كلمة غلط أو نسيتها أو زدت، تطلع لك بالأحمر. الحركات والتجويد ما أحاسبك عليها.":"اضغط \"ابدأ التسميع\" واقرأ من حفظك. الكلمات تطلع كل ما قلتها صح، واللي تنساها تطلع بالأحمر."}</p>`;
 
   let lastPage=null, lastS=null;
   h+=`<div id="ayahs" class="${MODE==="voice"&&VOICE.showText?"showtext":""}">`;
@@ -597,13 +600,16 @@ function renderHub(){
 /* ----- voice tasmee' ----- */
 let DICT=null, DICT_READY=false;
 const VOICE={key:"", T:[], start:{}, st:[], p:0, finals:"", partial:"", hints:new Set(), state:"idle", showText:false, ended:false};
+const SHOW=()=>!S||S.check!=="fix"; // show only (the default): the ayah you read appears, no mistakes marked
+function ayahLabel(g1,g2){ const [s,a]=A[g1], b=A[g2][1]; return "سورة "+surahName(s)+"، "+(g2===g1||A[g2][0]!==s?"آية "+AR(a):"آية "+AR(a)+"–"+AR(b)); }
+function elseHTML(g1,g2,title){ let h=title===false?"":`<p class="sub" style="margin-top:8px">قريت من مكان ثاني: ${ayahLabel(g1,g2)}</p>`; for(let g=g1;g<=g2&&g<N;g++) h+=`<div class="else-ayah">${A[g][4]} <span class="num">﴿${AR(A[g][1])}﴾</span></div>`; return h; }
 function norm(w){ return w.replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u08D3-\u08FF\u0640]/g,"").replace(/[ٱأإآا]/g,"").replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/ؤ/g,"و").replace(/ئ/g,"ي").replace(/ء/g,"").replace(/[^\u0621-\u064A]/g,""); }
 function lev(a,b){ if(a===b) return 0; const m=a.length,n=b.length; if(!m) return n; if(!n) return m; let prev=Array.from({length:n+1},(_,j)=>j);
   for(let i=1;i<=m;i++){ const cur=[i]; for(let j=1;j<=n;j++) cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1)); prev=cur; } return prev[n]; }
 function sim(a,b){ if(!a||!b) return 0; if(a===b) return 1; if(Math.min(a.length,b.length)<=2) return 0; return 1-lev(a,b)/Math.max(a.length,b.length); }
 function voicePrepare(idx){
   const key=idx[0]+":"+idx[idx.length-1]+":"+idx.length; if(VOICE.key===key) return;
-  VOICE.key=key; VOICE.T=[]; VOICE.start={}; VOICE.finals=""; VOICE.partial=""; VOICE.hints=new Set(); VOICE.ended=false; VOICE.base=0; VOICE.skipSpoken=0;
+  VOICE.key=key; VOICE.T=[]; VOICE.start={}; VOICE.finals=""; VOICE.partial=""; VOICE.hints=new Set(); VOICE.ended=false; VOICE.base=0; VOICE.skipSpoken=0; VOICE.elseHTML=""; VOICE.elseFrom=null; VOICE.elseTried=null;
   for(const i of idx){ VOICE.start[i]=VOICE.T.length; for(const w of A[i][4].split(/\s+/)) VOICE.T.push({i, n:norm(w)}); }
   VOICE.st=new Array(VOICE.T.length).fill(0); VOICE.p=0;
 }
@@ -613,7 +619,8 @@ function align(text){
   if(VOICE.skipSpoken) sp=sp.slice(VOICE.skipSpoken);
   else { const ex=stripExtras(sp); const drop=ex.nIst+(ex.nBas&&!expectsBasmala()?ex.nBas:0); if(drop) sp=sp.slice(drop); } // the isti'adha / basmala before the passage
   const skipHints=()=>{ while(p<T.length && H.has(p)){ st[p]=3; p++; } };
-  const stay=S && S.stay!==false;
+  const show=SHOW(), stay=!show && S && S.stay!==false;
+  let tail=0; // spoken words after the last one that matched (show only: reading somewhere else)
   p=VOICE.base||0; for(let k=0;k<p;k++) st[k]=6;
   for(let j=0;j<sp.length;j++){
     skipHints(); if(p>=T.length) break;
@@ -625,13 +632,14 @@ function align(text){
       if(k+1<T.length && sim(sp[j],tn+T[k+1].n)>=Math.max(thr,0.8)){ best=k; two=true; break; }
       if(j+1<sp.length && sim(sp[j]+sp[j+1],tn)>=Math.max(thr,0.8)){ best=k; eat=true; break; }
     }
-    if(best<0) continue;
+    if(best<0){ if(sp[j].length>1) tail++; continue; }
+    tail=0;
     if(stay && best>p){ if(!H.has(p)) st[p]=2; continue; } // stay: a skipped word stops you there until you say it
-    for(let m=p;m<best;m++) st[m]=H.has(m)?3:2;
+    for(let m=p;m<best;m++) st[m]=H.has(m)?3:show?(best-p<=3?1:0):2; // show only: a word or three the speech-to-text missed
     st[best]=st[best]===2?4:1; p=best+1; if(two){ st[best+1]=1; p=best+2; } if(eat) j++;
   }
   skipHints();
-  return {st,p};
+  return {st,p,tail};
 }
 function voicePanel(){
   return `<div class="voicebox" style="margin:0">
@@ -639,25 +647,32 @@ function voicePanel(){
     <button class="btn small ghost" data-act="voice-hint" title="تلميح">💡</button><button class="btn small ghost" data-act="voice-reset" title="من جديد">↺</button><button class="btn small ghost" data-act="voice-settings" title="الإعدادات">⚙️</button></div>
     <div class="vstats" id="vstats"></div>
     <div class="partial" id="partial" style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis"></div>
+    <div id="voiceElse">${VOICE.elseHTML||""}</div>
   </div>`;
 }
 function micLabel(){ return VOICE.state==="idle"?(VOICE.finals?"كمّل التسميع":"ابدأ التسميع"):VOICE.state==="starting"?"لحظة…":VOICE.state==="finishing"?"…":"أسمعك… ⏹ وقّف"; }
 function voiceUpdate(){
   if(VIEW!=="read"||MODE!=="voice") return;
-  const {st,p}=align(VOICE.finals+" "+VOICE.partial);
+  const {st,p,tail}=align(VOICE.finals+" "+VOICE.partial);
   const old=VOICE.st; VOICE.st=st; VOICE.p=p;
   const cls=["w h","w ok","w miss","w hint","w fixed","w skip","w dim"];
   for(let k=0;k<st.length;k++){ if(st[k]!==old[k] || VOICE._fresh!==VOICE.key){ const el=document.querySelector('[data-w="'+k+'"]'); if(el) el.className=cls[st[k]]; } }
   VOICE._fresh=VOICE.key;
   const ok=st.filter(x=>x===1).length, miss=st.filter(x=>x===2).length, hint=st.filter(x=>x===3).length, left=st.length-p;
-  const vs=$("#vstats"); if(vs) vs.innerHTML=`<span style="color:var(--green)">صح <b>${ok}</b></span><span style="color:var(--danger)">نسيت أو غلطت <b>${miss}</b></span><span style="color:var(--gold)">تلميح <b>${hint}</b></span><span class="muted">باقي <b>${left}</b> كلمة</span>`;
+  const vs=$("#vstats"); if(vs) vs.innerHTML=SHOW()?`<span style="color:var(--green)">قريت <b>${ok}</b> كلمة</span><span class="muted">باقي <b>${left}</b> كلمة</span>`:`<span style="color:var(--green)">صح <b>${ok}</b></span><span style="color:var(--danger)">نسيت أو غلطت <b>${miss}</b></span><span style="color:var(--gold)">تلميح <b>${hint}</b></span><span class="muted">باقي <b>${left}</b> كلمة</span>`;
+  if(SHOW() && tail>=5 && VOICE.state==="listening") voiceElsewhere();
+  else if(!tail && VOICE.elseHTML){ VOICE.elseHTML=""; const el=$("#voiceElse"); if(el) el.innerHTML=""; } // back in the passage
   const pe=$("#partial"); if(pe && VOICE.state!=="idle") pe.textContent=VOICE.partial||"…";
   // keep the next word in view while reciting
   if(VOICE.state==="listening"){ const nx=document.querySelector('[data-w="'+Math.min(p,st.length-1)+'"]'); if(nx){ const r=nx.getBoundingClientRect(); const tb=document.querySelector(".toolbar"); const top=tb?tb.getBoundingClientRect().bottom+10:120; if(r.bottom>innerHeight-150||r.top<top) nx.scrollIntoView({block:"center",behavior:"smooth"}); } }
   if(p>=st.length && st.length && VOICE.state==="listening"){ stopDict(); toast("ما شاء الله، خلصت التسميع ✓"); VOICE.ended=true; }
   const sum=$("#voiceSum");
   if(sum){
-    if((VOICE.ended || (VOICE.state==="idle" && VOICE.finals)) && p>0){
+    if((VOICE.ended || (VOICE.state==="idle" && VOICE.finals)) && p>0 && SHOW()){
+      const read=[...new Set(st.map((v,k)=>v===1||v===4?VOICE.T[k].i:-1).filter(x=>x>=0))];
+      sum.innerHTML=`<div class="card"><h2>قريت</h2><p style="margin:6px 0 0;font-size:15px"><b style="color:var(--green)">${ok}</b> كلمة${read.length?" · "+describeIdx(read).join("، "):""}</p>
+        <p class="sub" style="margin-top:10px;font-size:12px">هذا عرض بس بدون تصحيح. تقدر تشغّل تصحيح الأخطاء من ⚙️.</p></div>`;
+    } else if((VOICE.ended || (VOICE.state==="idle" && VOICE.finals)) && p>0){
       const pct=Math.round(ok/Math.max(1,ok+miss+hint)*100);
       const bad=[...new Set(st.map((v,k)=>v===2?VOICE.T[k].i:-1).filter(x=>x>=0))];
       sum.innerHTML=`<div class="card"><h2>نتيجة التسميع</h2><p style="margin:6px 0 0;font-size:15px"><b style="color:var(--green)">${ok}</b> كلمة صح من ${ok+miss+hint} (${pct}٪)${left?` · ما وصلت لـ ${left} كلمة`:""}</p>
@@ -709,6 +724,32 @@ function stripExtras(sp){
   return {n, nIst, nBas};
 }
 function expectsBasmala(){ const E=extraWords().basmala, T=VOICE.T, b=VOICE.base||0; let m=0; for(let i=0;i<E.length&&b+i<T.length;i++) if(T[b+i].n===E[i]) m++; return m>=E.length-1; }
+function wordIndex(){
+  if(!WIDX){ WIDX=new Map(); const words=[]; for(let i=0;i<N;i++){ const ws=A[i][4].split(/\s+/).map(norm); ws.forEach((w,k)=>words.push([i,k,w])); }
+    WIDX.words=words; for(let x=0;x+1<words.length;x++){ const key=words[x][2]+" "+words[x+1][2]; let l=WIDX.get(key); if(!l) WIDX.set(key,l=[]); if(l.length<300) l.push(x); } }
+  return WIDX;
+}
+/** spoken words → where in the Quran they start (index into wordIndex().words), by votes of word pairs */
+function wordVote(sp, filter){ const I=wordIndex(), votes=new Map(), firstJ=new Map();
+  for(let j=0;j+1<sp.length;j++){ if(sp[j].length<2||sp[j+1].length<2) continue; const l=I.get(sp[j]+" "+sp[j+1]); if(!l) continue; for(const x of l){ const start=x-j; if(start<0||(filter&&!filter(start))) continue; votes.set(start,(votes.get(start)||0)+1); if(!firstJ.has(start)) firstJ.set(start,j); } }
+  let best=null, bv=0, second=0; for(const [x,v] of votes){ if(v>bv){ second=bv; bv=v; best=x; } else if(v>second) second=v; }
+  return {best,bv,second,jmin:best==null?0:firstJ.get(best)}; } // jmin: the first spoken word that matched there
+/** show only: the last words said match nothing here; find them anywhere. A free start moves there, a set passage
+    shows which ayah it was. */
+let RELOCATING=false;
+function voiceElsewhere(){
+  if(RELOCATING) return;
+  const words=VOICE.finals.trim().split(/\s+/); if(VOICE.elseFrom!=null && VOICE.elseFrom>words.length) VOICE.elseFrom=null;
+  if(VOICE.elseTried===words.length) return; VOICE.elseTried=words.length; // once per new words
+  const recent=words.slice(Math.max(VOICE.elseFrom||0, words.length-12)), sp=recent.map(norm);
+  const r=wordVote(sp,null); if(r.best==null||r.bv<2||r.bv===r.second) return;
+  const W=wordIndex().words, g=W[r.best+r.jmin][0], g2=W[Math.min(W.length-1,r.best+sp.length-1)][0];
+  if(READ&&READ.free){ // a free start: carry on from there
+    const from=recent.slice(r.jmin); VOICE.finals=from.join(" "); VOICE.elseFrom=null; VOICE.elseHTML="";
+    RELOCATING=true; try{ freeFindWords(); } finally { RELOCATING=false; } VOICE.elseTried=from.length; return; }
+  VOICE.elseFrom=words.length; // look only at what comes after this next time
+  VOICE.elseHTML=elseHTML(g,Math.max(g,g2)); const el=$("#voiceElse"); if(el) el.innerHTML=VOICE.elseHTML;
+}
 function freeFindWords(){
   const all=VOICE.finals.split(/\s+/).map(norm).filter(Boolean);
   const ex=stripExtras(all), rest=all.slice(ex.n), pe=$("#partial");
@@ -716,17 +757,11 @@ function freeFindWords(){
   if(ex.n && longWords<2){ if(pe) pe.textContent=ex.nBas?"البسملة ✓ اقرأ أول السورة…":"الاستعاذة ✓ كمّل…"; return; }
   if(longWords<(ex.nBas?2:4)){ if(pe) pe.textContent="كمّل… ("+VOICE.finals.trim()+")"; return; }
   const sp=rest;
-  if(!WIDX){ WIDX=new Map(); const words=[]; for(let i=0;i<N;i++){ const ws=A[i][4].split(/\s+/).map(norm); ws.forEach((w,k)=>words.push([i,k,w])); }
-    WIDX.words=words; for(let x=0;x+1<words.length;x++){ const key=words[x][2]+" "+words[x+1][2]; let l=WIDX.get(key); if(!l) WIDX.set(key,l=[]); if(l.length<300) l.push(x); } }
-  const W=WIDX.words;
+  const W=wordIndex().words;
   // after a basmala the reciter is starting a surah: only the first word of an ayah 1 (al-Fatiha: of 1:2) can be the start
   const opening=(x)=>{ const w=W[x]; return w && w[1]===0 && (A[w[0]][1]===1 ? w[0]!==0 : w[0]===1); };
-  const vote=(filter)=>{ const votes=new Map();
-    for(let j=0;j+1<sp.length;j++){ if(sp[j].length<2||sp[j+1].length<2) continue; const l=WIDX.get(sp[j]+" "+sp[j+1]); if(!l) continue; for(const x of l){ const start=x-j; if(start<0||(filter&&!filter(start))) continue; votes.set(start,(votes.get(start)||0)+1); } }
-    let best=null, bv=0, second=0; for(const [x,v] of votes){ if(v>bv){ second=bv; bv=v; best=x; } else if(v>second) second=v; }
-    return {best,bv,second}; };
-  let r=ex.nBas?vote(opening):null;
-  if(!r||r.best==null||r.bv===r.second) r=vote(null);
+  let r=ex.nBas?wordVote(sp,opening):null;
+  if(!r||r.best==null||r.bv===r.second) r=wordVote(sp,null);
   const {best,bv,second}=r, minVotes=ex.nBas&&r.best!=null&&opening(r.best)?1:2;
   if(best==null || bv<minVotes || bv===second){ if(pe) pe.textContent=bv===second&&bv>=2?"هالمقطع يتكرر، كمّل شوي…":"ما عرفتها بعد، كمّل…"; return; }
   let [g,k]=W[best];
@@ -741,7 +776,8 @@ function freeFindWords(){
 }
 
 /* ----- accurate tasmee' (own site): judged on whole words only (the user asked) — tasmee-engine.js ----- */
-const ACC={ready:false, loading:false, session:null, key:"", opts:null, map:new Map(), status:"", bad:false, listening:false, passage:null};
+const ACC={ready:false, loading:false, session:null, key:"", opts:null, map:new Map(), status:"", bad:false, listening:false, passage:null, elseHTML:""};
+function setElse(h){ ACC.elseHTML=h||""; const el=$("#accElse"); if(el) el.innerHTML=ACC.elseHTML; }
 function accAvailable(){ return STANDALONE && typeof WebAssembly==="object" && !!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia) && !!(window.AudioContext); }
 function useAcc(){ return accAvailable() && S && S.engine!=="words"; }
 function loadScriptOnce(src){ return new Promise((res,rej)=>{ const x=document.createElement("script"); x.src=src; x.onload=res; x.onerror=()=>rej(new Error(src)); document.head.appendChild(x); }); }
@@ -752,17 +788,22 @@ function accPanel(){
     <button class="btn small ghost" data-act="acc-reset" title="من جديد">↺</button><button class="btn small ghost" data-act="voice-settings" title="الإعدادات">⚙️</button></div>
     <div class="level"><i id="lvl"></i></div>
     <div class="acc-status${ACC.bad?" bad":""}" id="accStatus">${ACC.status||(ACC.ready?"جاهز. اضغط «ابدأ التسميع» واقرأ.":"أول مرة: بحمّل نموذج التسميع (٢٣ ميغا) ويتخزن في جهازك.")}</div>
+    <div id="accElse">${ACC.elseHTML||""}</div>
     <div class="vstats" id="vstats"></div>
   </div>`;
 }
 function voiceSettings(){
   const acc=useAcc();
+  const show=SHOW();
   openSheet(`<h3>إعدادات التسميع</h3>
-    <p class="sub" style="margin-top:12px">لما تغلط</p>
-    <div class="seg" style="margin-top:6px"><button data-stay="1" class="${S.stay!==false?"on":""}">أوقف عندي لين أعيدها</button><button data-stay="0" class="${S.stay===false?"on":""}">كمّل وعلّمها بالأحمر</button></div>
+    <p class="sub" style="margin-top:12px">طريقة التسميع</p>
+    <div class="seg" style="margin-top:6px"><button data-check="show" class="${show?"on":""}">اعرض الآية بس</button><button data-check="fix" class="${!show?"on":""}">صحّح أخطائي</button></div>
+    <p class="sub" style="margin-top:6px;font-size:12.5px">${show?"تقرأ وأطلع لك الآية اللي قريتها، وإذا قريت من مكان ثاني أطلع لك هي وين. ما أوقفك ولا أعلّم أخطاء.":"أعلّم الكلمة اللي تغلط فيها أو تنساها."}</p>
+    ${show?"":`<p class="sub" style="margin-top:12px">لما تغلط</p>
+    <div class="seg" style="margin-top:6px"><button data-stay="1" class="${S.stay!==false?"on":""}">أوقف عندي لين أعيدها</button><button data-stay="0" class="${S.stay===false?"on":""}">كمّل وعلّمها بالأحمر</button></div>`}
     <p class="sub" style="margin-top:12px">النص وقت التسميع</p>
     <div class="seg" style="margin-top:6px"><button data-showtext="0" class="${!VOICE.showText?"on":""}">مخفي</button><button data-showtext="1" class="${VOICE.showText?"on":""}">باهت</button></div>
-    <p class="sub" style="margin-top:12px;font-size:12.5px">يحاسبك على الكلمات بس: كلمة غلط، أو نسيتها، أو زدت كلمة. الحركات (الفتحة والضمة والكسرة والسكون والشدة والتنوين) والمدود والتجويد ما يحاسبك عليها.</p>
+    ${show?"":`<p class="sub" style="margin-top:12px;font-size:12.5px">يحاسبك على الكلمات بس: كلمة غلط، أو نسيتها، أو زدت كلمة. الحركات (الفتحة والضمة والكسرة والسكون والشدة والتنوين) والمدود والتجويد ما يحاسبك عليها.</p>`}
     ${accAvailable()?`<p class="sub" style="margin-top:12px">دقة التسميع</p>
     <div class="seg" style="margin-top:6px"><button data-engine="acc" class="${acc?"on":""}">الدقيق</button>${DICT?`<button data-engine="words" class="${!acc?"on":""}">السريع</button>`:""}</div>
     <p class="sub" style="margin-top:6px;font-size:12.5px">${acc?"يسمع صوتك بنموذج متخصص في التلاوة، ويشتغل داخل جهازك بدون ما يطلع صوتك.":"أسرع وأخف، يحوّل صوتك لنص ويقارنه بالآيات."}</p>`:""}
@@ -789,7 +830,7 @@ function accMicClick(){
   if(!ACC.session || ACC.key!==accKey()){
     const ayat = kind==="free" ? null : readContext().idx;
     ACC.map.clear(); ACC.key=accKey(); ACC.passage=null;
-    ACC.opts={ayat, stay:S.stay!==false, words:true, harakat:false, tajweed:false, surahOf:g=>A[g][0], isWaqf:(g,w)=>/[\u06D6-\u06DB]/.test(A[g][4].split(/\s+/)[w]||""), onEvent:accEvent, hear:window.__tasmeeTestHear};
+    ACC.opts={ayat, show:SHOW(), stay:S.stay!==false, words:true, harakat:false, tajweed:false, surahOf:g=>A[g][0], isWaqf:(g,w)=>/[\u06D6-\u06DB]/.test(A[g][4].split(/\s+/)[w]||""), onEvent:accEvent, hear:window.__tasmeeTestHear};
     ACC.session=TasmeeEngine.Session(ACC.opts);
     if(ayat) ACC.passage=ACC.session.passage;
   }
@@ -801,7 +842,7 @@ function accStop(silent){
   ACC.session.stop(); ACC.listening=false;
   if(!silent){ setAccStatus("وقفت."); accSummary(); }
 }
-function accReset(){ accStop(true); ACC.session=null; ACC.key=""; ACC.map.clear(); ACC.passage=null; ACC.status=""; if(READ&&READ.free){ READ={kind:"free"}; } render(); }
+function accReset(){ accStop(true); ACC.session=null; ACC.key=""; ACC.map.clear(); ACC.passage=null; ACC.status=""; ACC.elseHTML=""; if(READ&&READ.free){ READ={kind:"free"}; } render(); }
 const ACC_CLS=["w h","w ok","w miss","w ok khafi","w fixed","w skip","w ok dim"];
 function awOf(k){ const w=ACC.passage.words[k]; return w.ayah+":"+w.w; }
 function plainWord(w){ return w.replace(/\u06E1/g,"\u0652").replace(/[\u06D6-\u06ED]/g,""); } // for text outside the Quran font (it lacks the Uthmani marks)
@@ -810,7 +851,7 @@ function setWordClass(aw){ const el=document.querySelector('[data-aw="'+aw+'"]')
 function accApply(){ for(const aw of ACC.map.keys()) setWordClass(aw); accStats(); }
 function accStats(){
   let ok=0,err=0,khafi=0,fixed=0; for(const m of ACC.map.values()){ if(m.state===1)ok++; else if(m.state===2||m.state===5)err++; else if(m.state===3)khafi++; else if(m.state===4)fixed++; }
-  const vs=$("#vstats"); if(vs) vs.innerHTML=`<span style="color:var(--green)">صح <b>${ok}</b></span><span style="color:var(--danger)">أخطاء <b>${err}</b></span><span style="color:var(--gold)">صحّحتها <b>${fixed}</b></span>`;
+  const vs=$("#vstats"); if(vs) vs.innerHTML=SHOW()?`<span style="color:var(--green)">قريت <b>${ok+fixed}</b> كلمة</span>`:`<span style="color:var(--green)">صح <b>${ok}</b></span><span style="color:var(--danger)">أخطاء <b>${err}</b></span><span style="color:var(--gold)">صحّحتها <b>${fixed}</b></span>`;
   return {ok,err,khafi,fixed};
 }
 function accEvent(e){
@@ -834,7 +875,8 @@ function accEvent(e){
   }
   if(e.type==="heard"){ const aw=awOf(e.word); const m=ACC.map.get(aw)||{state:0,notes:[]}; m.seen=true; ACC.map.set(aw,m); setWordClass(aw); return; }
   if(e.type==="breath"){
-    if(e.stopAt<0) setAccStatus(e.done?"ما شاء الله، خلصت ✓":"تمام ✓ كمّل");
+    if(e.show){ const P=ACC.passage; setElse(""); setAccStatus((e.done?"ما شاء الله، خلصت ✓ ":"")+"قريت: "+ayahLabel(P.words[e.from].ayah,P.words[e.to].ayah)); }
+    else if(e.stopAt<0) setAccStatus(e.done?"ما شاء الله، خلصت ✓":"تمام ✓ كمّل");
     if(e.done){ accStop(); toast("ما شاء الله، خلصت التسميع ✓"); }
     else { const P=ACC.passage, k=e.stopAt>=0?e.stopAt:Math.min(P.words.length-1,e.to+1); const el=document.querySelector('[data-aw="'+awOf(k)+'"]'); if(el){ const r=el.getBoundingClientRect(); const tb=document.querySelector(".toolbar"); const top=tb?tb.getBoundingClientRect().bottom+10:120; if(r.bottom>innerHeight-150||r.top<top) el.scrollIntoView({block:"center",behavior:"smooth"}); } }
     return;
@@ -843,6 +885,8 @@ function accEvent(e){
   if(e.type==="short"){ setAccStatus("كمّل… أحتاج كلمات أكثر عشان أعرف الآية."); return; }
   if(e.type==="ambiguous"){ setAccStatus("هالمقطع يتكرر في أكثر من مكان، كمّل شوي عشان أعرف وين."); return; }
   if(e.type==="notfound"){ setAccStatus("ما عرفت الآية. اقرأ أوضح أو جملة أطول.", true); return; }
+  if(e.type==="elsewhere"){ setAccStatus("قريت من مكان ثاني: "+ayahLabel(e.ayah,e.last)); setElse(elseHTML(e.ayah,e.last,false)); return; }
+  if(e.type==="lost" && SHOW()){ setAccStatus("ما عرفت وش قريت. كمّل أو اقرأ أوضح."); return; }
   if(e.type==="lost"){ const P=ACC.passage; let msg="اللي قريته ما طابق المكان المتوقع."; if(P){ const k=P.words.findIndex((w,i)=>P.spans[i][0]>=ACC.session.pointer); if(k>=0) msg+=" ارجع من «"+plainWord(wordText(awOf(k)))+"»."; } setAccStatus(msg, true); return; }
   if(e.type==="error"){ console.error(e.error); setAccStatus("صار خطأ في التحليل: "+e.error, true); return; }
 }
@@ -857,6 +901,9 @@ function showWordNotes(aw){
 function accSummary(){
   const sum=$("#voiceSum"); if(!sum||!ACC.passage) return;
   const {ok,err,khafi,fixed}=accStats(); const total=ok+err+khafi+fixed; if(!total){ sum.innerHTML=""; return; }
+  if(SHOW()){ const read=[...new Set([...ACC.map].filter(([aw,m])=>m.state===1||m.state===4).map(([aw])=>+aw.split(":")[0]))].sort((x,y)=>x-y);
+    sum.innerHTML=`<div class="card"><h2>قريت</h2><p style="margin:6px 0 0;font-size:15px"><b style="color:var(--green)">${ok+fixed}</b> كلمة${read.length?" · "+describeIdx(read).join("، "):""}</p>
+      <p class="sub" style="margin-top:10px;font-size:12px">هذا عرض بس بدون تصحيح. تقدر تشغّل تصحيح الأخطاء من ⚙️.</p></div>`; return; }
   const items=[]; for(const [aw,m] of ACC.map){ const ns=(m.notes&&m.notes.length)?m.notes:(m.state===4&&m.was?m.was.map(n=>Object.assign({},n,{msg:"صحّحتها ✓ (كان: "+n.msg+")",severity:"khafi"})):[]); if(ns.length&&m.state>=2&&m.state<=5) items.push([aw,Object.assign({},m,{notes:ns})]); }
   sum.innerHTML=`<div class="card"><h2>نتيجة التسميع</h2>
     <p style="margin:6px 0 0;font-size:15px"><b style="color:var(--green)">${ok+khafi}</b> كلمة صح من ${total}${fixed?` · صحّحت ${fixed}`:""}${err?` · <span class="sev-jali">${err} لسه فيها غلط</span>`:""}</p>
@@ -1061,6 +1108,7 @@ document.addEventListener("click", e=>{
   if(d.order){ const P=S||DRAFT; if(P.order!==d.order){ P.order=d.order; P.start=d.order==="back"?114:1; } if(S){READ=null;save();} render(); return; }
   if(d.themePick){ const P=S||DRAFT; if(P) P.theme=d.themePick; try{ localStorage.setItem("hifz-theme",d.themePick); }catch(e){} if(S) save(); applyTheme(); render(); return; }
   if(d.engine){ accStop(); stopDict(); S.engine=d.engine; save(); closeSheet(); render(); return; }
+  if(d.check){ S.check=d.check; save(); if(ACC.opts) ACC.opts.show=SHOW(); render(); voiceSettings(); return; }
   if(d.stay!==undefined){ S.stay=d.stay==="1"; save(); if(ACC.opts) ACC.opts.stay=S.stay; voiceSettings(); if(VOICE.T.length) voiceUpdate(); return; }
   if(d.showtext!==undefined){ VOICE.showText=d.showtext==="1"; const el=$("#ayahs"); if(el) el.classList.toggle("showtext",VOICE.showText); voiceSettings(); return; }
   if(d.aw && MODE==="voice"){ showWordNotes(d.aw); return; }
@@ -1094,7 +1142,7 @@ document.addEventListener("click", e=>{
   if(act==="audio-settings"){ audioSheet(); return; }
   if(act==="range-listen"){ const r=S.range; MODE="read"; REPS={}; go("read",{kind:"range",s:r.s,a:r.a,b:r.b}); playIdx(readContext().idx,{}); return; }
   if(act==="voice-hint"){ VOICE.hints.add(VOICE.p); voiceUpdate(); return; }
-  if(act==="voice-reset"){ stopDict(); VOICE.finals=""; VOICE.partial=""; VOICE.hints=new Set(); VOICE.ended=false; VOICE.skipSpoken=0; if(READ&&READ.free){ READ={kind:"free"}; VOICE.key=""; } render(); return; }
+  if(act==="voice-reset"){ stopDict(); VOICE.finals=""; VOICE.partial=""; VOICE.hints=new Set(); VOICE.ended=false; VOICE.skipSpoken=0; VOICE.elseHTML=""; VOICE.elseFrom=null; VOICE.elseTried=null; if(READ&&READ.free){ READ={kind:"free"}; VOICE.key=""; } render(); return; }
   if(act==="voice-show"){ VOICE.showText=!VOICE.showText; const el=$("#ayahs"); if(el) el.classList.toggle("showtext",VOICE.showText); t.textContent=VOICE.showText?"اخفِ النص":"اعرض النص"; return; }
   if(act==="voice-weak"){ const pages=new Set(); VOICE.st.forEach((v,k)=>{ if(v===2) pages.add(A[VOICE.T[k].i][2]); }); for(const p of pages) S.weak[p]=(S.weak[p]||0)+1; save(); toast("سجلت "+pagesWord(pages.size)+" للتثبيت"); return; }
   if(act==="back"){ const k=READ&&READ.kind; READ=null; go(["new","near","far","weak"].includes(k)?"today":"read"); return; }

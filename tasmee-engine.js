@@ -669,7 +669,8 @@
       for (let k = 0; k < P.words.length; k++) { state.push(0); wordNotes.push([]); }
       emit("passage", { passage: P });
     }
-    if (opts.ayat && opts.ayat.length) setPassage(opts.ayat, 0);
+    const free = !(opts.ayat && opts.ayat.length); // free start: the passage is found from the recitation
+    if (!free) setPassage(opts.ayat, 0);
 
     function wordAt(i) { for (let k = 0; k < P.spans.length; k++) if (P.spans[k][0] <= i && i < P.spans[k][1]) return k; return P.spans.length - 1; }
 
@@ -704,23 +705,28 @@
         if (f.short) { pendingHeard = h; emit("short", {}); return; }
         if (f.ambiguous) { pendingHeard = h.slice(-400); emit("ambiguous", {}); return; }
         pendingHeard = "";
-        let g = f.ayah, start = f.s;
-        const basmalaFatiha = afterBasmala && g === 1; // «بسم الله...» then «الحمد لله»: al-Fatiha from its first ayah
+        const basmalaFatiha = afterBasmala && f.ayah === 1; // «بسم الله...» then «الحمد لله»: al-Fatiha from its first ayah
         afterBasmala = false;
-        const first = basmalaFatiha ? 0 : g, list = []; // from this ayah to the end of its surah
-        const sIdx = opts.surahOf(first); for (let k = first; k < PH.ayat.length && opts.surahOf(k) === sIdx; k++) list.push(k);
-        if (basmalaFatiha) start += PH.ayat[0][0].length;
-        setPassage(list, start);
-        for (let k = 0; k < P.words.length && P.spans[k][1] <= start + 2; k++) {
-          const st = basmalaFatiha && P.words[k].ayah === 0 ? 1 : 6; state[k] = st; emit("word", { word: k, state: st, notes: [] });
-        }
-        emit("found", { ayah: first, surahStart: surahStart(g) || basmalaFatiha });
+        openAt(f, basmalaFatiha, false);
         return judge(heard, probs, times, false, ms, true);
       }
       return judge(heard, probs, times, interim, ms, false);
     }
 
-    function judge(heard, probs, times, interim, ms, first) {
+    // free start: the passage becomes this ayah to the end of its surah, the reciter starting where f says
+    function openAt(f, basmalaFatiha, moved) {
+      const g = f.ayah; let start = f.s;
+      const first = basmalaFatiha ? 0 : g, list = [];
+      const sIdx = opts.surahOf(first); for (let k = first; k < PH.ayat.length && opts.surahOf(k) === sIdx; k++) list.push(k);
+      if (basmalaFatiha) start += PH.ayat[0][0].length;
+      setPassage(list, start);
+      for (let k = 0; k < P.words.length && P.spans[k][1] <= start + 2; k++) {
+        const st = basmalaFatiha && P.words[k].ayah === 0 ? 1 : 6; state[k] = st; emit("word", { word: k, state: st, notes: [] });
+      }
+      emit("found", { ayah: first, surahStart: surahStart(g) || basmalaFatiha, moved });
+    }
+
+    function judge(heard, probs, times, interim, ms, first, again) {
       const back = 80, from = Math.max(0, ptr - back), to = Math.min(P.ph.length, ptr + heard.length * 2 + 60);
       let loc = locate(P.ph, from, to, heard, ptr);
       let score = loc.cost / heard.length;
@@ -729,7 +735,7 @@
         if (wide.cost / heard.length < score - 0.1) { loc = wide; score = wide.cost / heard.length; }
       }
       const maxScore = heard.length < 15 ? 0.3 : 0.45; // a short breath must match closely
-      if (score > maxScore) { if (!interim) emit("lost", { heard, score }); return; }
+      if (score > maxScore) { if (!interim && !(opts.show && elsewhere(heard, probs, times, ms, again))) emit("lost", { heard, score }); return; }
       // snap the slice to whole words
       let ws = wordAt(loc.s), we = wordAt(Math.max(loc.s, loc.e - 1));
       if (loc.e < P.spans[we][1] - Math.max(2, (P.spans[we][1] - P.spans[we][0]) * 0.4)) we--; // the last word was cut off
@@ -737,6 +743,12 @@
 
       if (interim) { // live: only show which words were heard, judge at the pause
         for (let k = ws; k <= we; k++) if (state[k] === 0) emit("heard", { word: k });
+        return;
+      }
+      if (opts.show) { // show only: the words recited appear, nothing is judged
+        for (let k = ws; k <= we; k++) if (state[k] !== 1) { const prev = state[k]; state[k] = 1; wordNotes[k] = []; emit("word", { word: k, state: 1, notes: [], prev }); }
+        ptr = P.spans[we][1];
+        emit("breath", { heard, ms, from: ws, to: we, stopAt: -1, done: ptr >= P.ph.length, show: true });
         return;
       }
       // words jumped over between where the reciter was expected and where this breath starts: not recited
@@ -786,6 +798,18 @@
       }
       ptr = stopAt >= 0 ? P.spans[stopAt][0] : P.spans[we][1];
       emit("breath", { heard, ms, from: ws, to: we, stopAt, done: ptr >= P.ph.length, segs: segs.length });
+    }
+
+    // show only: the breath is not where the passage goes; find it anywhere in the Quran. A free start moves there;
+    // a set passage says which ayah it was. False when it can't be found.
+    function elsewhere(heard, probs, times, ms, again) {
+      if (again || skeleton(heard).length < 6) return false;
+      const f = findAyah(heard);
+      if (!f || f.short || f.ambiguous) return false;
+      if (free) { openAt(f, false, true); judge(heard, probs, times, false, ms, true, true); return true; }
+      const n = PH.ayat[f.ayah][0].length, next = PH.ayat[f.ayah + 1] ? f.ayah + 1 : f.ayah;
+      emit("elsewhere", { ayah: f.s >= n ? next : f.ayah, last: f.e > n + 3 ? next : f.ayah }); // the ayah(s) the breath covers
+      return true;
     }
 
     async function pump() {
